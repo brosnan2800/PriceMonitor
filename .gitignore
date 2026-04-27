@@ -1,0 +1,35 @@
+# 敏感配置文件（包含 API 密钥，禁止提交）
+config.py
+
+# 运行时生成的文件
+price_history.json
+price_monitor.log
+*.log
+*.db
+
+# 飞书二维码图片（可能含账号信息）
+feishu_bot_qr.png
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# macOS
+.DS_Store
+
+# 编辑器
+.vscode/
+.idea/
+.claude/
+*.swp
+
+# 环境变量文件
+.env
