@@ -156,6 +156,7 @@ def menu_card() -> OutgoingCard:
             # 控制行
             CardButton("系统设置 ⚙️", "go_settings", {}),
             CardButton("免打扰 🔕", "go_quiet", {}),
+            CardButton("重启服务 🔄", "go_restart", {}),
         ],
         footer="发送 /help 查看所有文字指令"
     )
@@ -190,7 +191,8 @@ def help_card() -> OutgoingCard:
         "　`/settings` 　　　　　　　查看当前推送配置\n"
         "　`/settings alert_interval 5`  预警检查间隔(分钟)\n"
         "　`/settings digest_time 15:30` 日报推送时间\n"
-        "　`/settings morning_time 9:00` 早报推送时间\n\n"
+        "　`/settings morning_time 9:00` 早报推送时间\n"
+        "　`/restart` 　　　　　　　重启服务（修改配置后生效）\n\n"
         "💡 发送 `/menu` 调出按钮面板"
     )
     return OutgoingCard(

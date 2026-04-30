@@ -93,6 +93,8 @@ class CommandHandler:
             self._cmd_mute(msg)
         elif text.startswith("/settings"):
             self._cmd_settings(msg)
+        elif text.startswith("/restart"):
+            self._cmd_restart(msg)
         else:
             # 未识别的消息，提示帮助
             self.adapter.send_text(
@@ -328,6 +330,7 @@ class CommandHandler:
             "go_alerts":            lambda: self._cmd_alert(msg),
             "go_settings":          lambda: self._cmd_settings(msg),
             "go_quiet":             lambda: self._cmd_quiet(msg),
+            "go_restart":           lambda: self._cmd_restart(msg),
             "add_watchlist":        lambda: self._add_from_callback(msg, data),
             "add_alert":            lambda: self._alert_from_callback(msg, data),
             "remove_watchlist":     lambda: self._remove_from_callback(msg, data),
@@ -458,6 +461,32 @@ class CommandHandler:
         }
         prompt = type_prompts.get(task_type, "请按提示操作")
         self.adapter.send_text(msg.user_id, prompt)
+
+    def _cmd_restart(self, msg: "IncomingMessage") -> None:
+        """通过飞书触发后台重启（先回复再重启，确保消息发出）"""
+        import subprocess
+        import threading
+        import os
+
+        restart_sh = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "restart.sh"
+        )
+        if not os.path.exists(restart_sh):
+            self.adapter.send_text(msg.user_id, "❌ 未找到 restart.sh，请手动重启")
+            return
+
+        self.adapter.send_text(
+            msg.user_id,
+            "🔄 正在重启服务...\n\n约 5 秒后重新连接，稍后可发送 `/menu` 验证是否恢复正常。"
+        )
+
+        def _do_restart():
+            import time
+            time.sleep(2)  # 等消息发出
+            subprocess.Popen(["bash", restart_sh])
+
+        threading.Thread(target=_do_restart, daemon=True).start()
 
     def _cmd_settings(self, msg: "IncomingMessage") -> None:
         """查看或修改系统配置"""
