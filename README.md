@@ -1,23 +1,29 @@
-# USD/CNH 和 布伦特原油价格监控系统
+# 综合秘书机器人 · Secretary Bot
 
-一个 Python 脚本系统，用于监控 USD/CNH 汇率和布伦特原油价格，并通过 **飞书** 或 **Telegram** 推送通知。
+一个基于**飞书**的个人综合秘书机器人，支持金融行情查询、自选监控、价格预警、定时推送等功能。采用 **卡片交互为主、/命令为辅** 的双向对话设计，告别纯推送模式。
 
-## ✨ 功能特点
+## ✨ 功能概览
 
-- **价格监控**: 定时获取 USD/CNH 汇率和布伦特原油（日线）价格
-- **智能提醒**: 价格超过阈值时自动推送警报
-- **多推送平台**: 同时支持飞书（国内推荐）和 Telegram
-- **飞书扫码部署**: 运行 `feishu_setup.py` 扫码自动完成飞书配置
-- **可配置间隔**: API 请求间隔、监控频率均可在配置文件中调整
-- **多平台运行**: 支持 Windows / Linux / Mac
+### 📈 金融查询（即时）
+- **实时行情**：A股、港股、加密货币（BTC/ETH等）、全球主要指数（标普、纳斯达克、道琼斯等）
+- **名称搜索**：支持股票名称查询，如 `/quote 贵州茅台`
+- **自选列表**：增删自选标的，批量查询行情，卡片内一键删除
 
-## 📋 系统要求
+### 🔔 价格预警（引导式设置）
+- 在行情卡片点击「设置预警」→ 弹出独立预警卡片
+- 支持四种条件：**涨幅预警 / 跌幅预警 / 价格上限 / 价格下限**
+- 对话引导输入数值，无需记忆指令格式
+- 2小时冷却防重复推送
 
-- Python 3.8+
-- Alpha Vantage API 密钥（免费注册，25次/天）
-- 推送平台二选一或均配置：
-  - 飞书开放平台应用（国内网络，推荐）
-  - Telegram Bot Token（需翻墙）
+### ⏰ 定时推送
+| 任务类型 | 推送时间 | 内容 |
+|---------|---------|------|
+| 每日行情报告 | 收盘后 15:30 | 自选股涨跌 + 大盘指数 + 重要公告 |
+| 指数早报 | 开盘前 09:00 | 沪深/港股/美股/加密货币行情 |
+| 价格预警 | 实时（每5分钟检查） | 价格突破阈值立即推送 |
+| 股票公告监控 | 定时 | 重大事项/年报/分红公告 |
+
+---
 
 ## 🚀 快速开始
 
@@ -32,205 +38,165 @@ cd PriceMonitor
 pip3 install -r requirements.txt
 ```
 
-### 3. 获取 API 密钥
-- **Alpha Vantage**（必需）: https://www.alphavantage.co/support/#api-key
-- **飞书**（推荐，国内可用）: 在飞书开放平台创建应用，获取 App ID 和 App Secret
-- **Telegram**（可选，需翻墙）: 通过 @BotFather 创建 Bot
-
-### 4. 配置系统
+### 3. 配置
 ```bash
-# 复制配置文件模板
 cp config.example.py config.py
-
-# 编辑配置文件，填入你的密钥
-nano config.py
+# 编辑 config.py，填入飞书 App ID、App Secret
 ```
 
-**飞书用户推荐使用扫码方式自动完成配置：**
+### 4. 启动 / 停止
 ```bash
-python3 feishu_setup.py
+# 后台启动
+bash restart.sh
+
+# 停止所有服务
+bash stop.sh
+
+# 查看日志
+tail -f price_monitor.log
 ```
 
-### 5. 测试运行
-```bash
-# 单次运行，验证配置是否正确
-python3 price_monitor.py --once
+---
 
-# 启动持续监控
-python3 price_monitor.py
+## 💬 使用方式
+
+### 主入口：`/menu`
+
+发送 `/menu` 或 `菜单` 调出全功能按钮面板：
+
 ```
+📈 金融查询
+  [查行情 🔍]  [我的自选 ⭐]  [删除自选 🗑]
+
+🔔 预警 & 任务
+  [价格预警 🔔]  [定时任务 ⏰]  [新建任务 ➕]
+
+⚙️ 控制
+  [系统设置 ⚙️]  [免打扰 🔕]
+```
+
+### 文字指令：`/help`
+
+发送 `/help` 查看所有可用的 `/命令` 说明。
+
+---
+
+## 📋 完整指令列表
+
+### 金融模块
+| 指令 | 说明 |
+|------|------|
+| `/quote 600519` | 查询 A股实时行情 |
+| `/quote 00700` | 查询港股行情 |
+| `/quote BTC` | 查询比特币行情 |
+| `/quote SPX` | 查询标普500指数 |
+| `/quote 贵州茅台` | 按名称搜索股票 |
+| `/watchlist` | 查看我的自选列表（含删除按钮） |
+| `/add 600519` | 添加自选 |
+| `/remove 600519` | 移除自选 |
+
+### 价格预警
+| 指令 | 说明 |
+|------|------|
+| `/alert` | 查看当前所有预警 |
+| `/alert 600519 above 2000` | 价格超过2000时提醒 |
+| `/alert 600519 below 1500` | 价格低于1500时提醒 |
+| `/alert 600519 change_pct 5` | 涨幅超过5%时提醒 |
+| `/alert 600519 change_pct -5` | 跌幅超过5%时提醒 |
+
+> 推荐通过行情卡片的「设置预警 🔔」按钮引导式创建，更方便。
+
+### 任务管理
+| 指令 | 说明 |
+|------|------|
+| `/tasks` | 查看所有定时任务 |
+| `/newtask` | 新建定时任务（卡片引导） |
+| `/deltask 3` | 删除任务 #3 |
+| `/pause 3` | 暂停/恢复任务 #3 |
+
+### 推送控制
+| 指令 | 说明 |
+|------|------|
+| `/quiet` | 开启/关闭免打扰模式 |
+| `/mute 600519 2h` | 屏蔽某标的推送 2 小时 |
+| `/settings` | 查看 & 修改系统配置 |
+
+---
+
+## ⚙️ 配置说明
+
+关键配置项（`config.py`）：
+
+```python
+# 飞书应用（必填）
+FEISHU_APP_ID = "cli_xxxx"
+FEISHU_APP_SECRET = "xxxx"
+FEISHU_OPEN_ID = "ou_xxxx"   # 由 feishu_setup.py 自动获取
+
+# 可选：Alpha Vantage（汇率/原油，免费500次/天）
+ALPHA_VANTAGE_API_KEY = "your_key"
+
+# 价格预警检查频率（分钟，默认5分钟）
+PRICE_ALERT_INTERVAL_MINUTES = 5
+
+# 日报推送时间
+DAILY_DIGEST_HOUR = 15
+DAILY_DIGEST_MINUTE = 30
+
+# 早报推送时间
+MORNING_REPORT_HOUR = 9
+MORNING_REPORT_MINUTE = 0
+```
+
+---
 
 ## 📁 项目结构
 
 ```
-.
-├── price_monitor.py          # 主监控程序
-├── data_collector.py         # 数据收集模块（Alpha Vantage）
-├── feishu_bot.py             # 飞书推送模块
-├── feishu_setup.py           # 飞书扫码配置工具
-├── telegram_bot.py           # Telegram 推送模块
-├── config.example.py         # 配置文件模板（复制为 config.py 后填写密钥）
-├── requirements.txt          # Python 依赖列表
-├── setup_guide.md            # 详细部署指南
-├── price-monitor.service     # systemd 服务文件（Linux 部署用）
-└── README.md                 # 本文档
+├── bot/
+│   ├── app.py                  # 主入口（双向对话 + 调度引擎）
+│   ├── adapters/
+│   │   ├── base.py             # 适配器基类（BaseAdapter / IncomingMessage / OutgoingCard）
+│   │   ├── feishu_adapter.py   # 飞书 WebSocket 长连接（主平台）
+│   │   └── telegram_adapter.py # Telegram（次平台，可选）
+│   ├── handlers/
+│   │   └── commands.py         # 指令路由 + 按钮回调 + 多步对话状态机
+│   ├── scheduler.py            # APScheduler 任务调度引擎
+│   └── formatters/
+│       └── cards.py            # 飞书卡片消息模板
+├── data/
+│   ├── sources/
+│   │   └── akshare_source.py   # 行情数据（腾讯财经 + Binance）
+│   └── db.py                   # SQLite 数据层
+├── config.example.py           # 配置模板
+├── config.py                   # 实际配置（不入 Git）
+├── restart.sh                  # 后台重启脚本
+├── stop.sh                     # 停止所有服务
+├── requirements.txt
+├── price_monitor.log           # 运行日志（自动生成）
+├── README.md
+└── MANUAL.md                   # 详细技术文档
 ```
-
-## ⚙️ 配置说明
-
-```python
-# config.py
-
-# Alpha Vantage API 密钥（必需）
-ALPHA_VANTAGE_API_KEY = "your_api_key"
-
-# 监控间隔（分钟）
-MONITOR_INTERVAL_MINUTES = 5
-
-# API 请求间隔（秒）—— 免费版建议 >= 2，避免触发频率限制
-API_REQUEST_INTERVAL_SECONDS = 2
-
-# 价格提醒阈值
-USD_CNH_UPPER_THRESHOLD = 7.15       # USD/CNH 上涨提醒阈值
-USD_CNH_LOWER_THRESHOLD = 7.10       # USD/CNH 下跌提醒阈值
-BRENT_OIL_CHANGE_THRESHOLD_PERCENT = 1.0  # 原油波动提醒阈值（%）
-
-# 启用的推送平台（可单独启用一个或两个都启用）
-ENABLED_PLATFORMS = ["feishu"]       # 可选: "telegram", "feishu"
-
-# 飞书配置
-FEISHU_APP_ID = "your_feishu_app_id"
-FEISHU_APP_SECRET = "your_feishu_app_secret"
-FEISHU_OPEN_ID = ""                  # 由 feishu_setup.py 自动获取
-
-# Telegram 配置（国内需翻墙）
-TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN"
-TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"
-```
-
-## 🚀 运行方式
-
-```bash
-# 单次运行（测试用）
-python3 price_monitor.py --once
-
-# 持续监控（前台）
-python3 price_monitor.py
-
-# 后台运行（Linux/Mac）
-nohup python3 price_monitor.py > monitor.log 2>&1 &
-```
-
-### Linux 系统服务
-```bash
-sudo cp price-monitor.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable price-monitor
-sudo systemctl start price-monitor
-```
-
-## 🔔 推送消息示例
-
-```
-📈 价格监控报告 📈
-
-💰 USD/CNH
-    └─ 价格: 7.1234
-    └─ 涨跌: 📈 +0.15% (+0.0111)
-    └─ 时间: 2024-01-01 14:30:05
-
-🛢️ 布伦特原油
-    └─ 价格: 85.67美元/桶
-    └─ 涨跌: 📉 -0.42% (-0.36)
-    └─ 时间: 2024-01-01 14:30:05
-
-🔧 系统信息
-• 本次检查: 2024-01-01 14:30:05
-• 下次检查: 14:35:05
-```
-
-## 📊 数据记录
-
-系统自动记录：
-- `price_history.json` - 历史价格数据
-- `price_monitor.log` - 系统运行日志
-- `price_monitor.db` - 数据库备份（如果启用）
-
-## 🔧 故障排除
-
-1. **`python: command not found`** → macOS/Linux 请用 `python3`
-2. **原油价格是几天前的** → Alpha Vantage 免费版 BRENT 接口只提供每日收盘价，属正常现象
-3. **API 返回 rate limit 错误** → 增大 `API_REQUEST_INTERVAL_SECONDS`，或等明天（25次/天限制）
-4. **飞书收不到消息** → 运行 `python3 feishu_setup.py` 重新获取 open_id
-5. **Telegram 连接失败** → 国内网络需要翻墙才能访问 Telegram API
-
-## 🚢 部署选项
-
-### 本地电脑
-- 24小时开机的电脑
-- 使用任务计划程序(cron/Windows任务计划)
-
-### 云服务器
-- 阿里云/腾讯云轻量服务器（月费5-15元）
-- 配置systemd服务自动运行
-
-### 免费云函数
-- Cloudflare Workers（有速率限制）
-- Railway/Heroku免费额度
-
-### Docker容器
-```dockerfile
-FROM python:3.9-slim
-WORKDIR /app
-COPY . .
-RUN pip install -r requirements.txt
-CMD ["python", "price_monitor.py"]
-```
-
-## 📊 API 说明
-
-### Alpha Vantage（免费版）
-- 限制：**25次/天，5次/分钟**
-- USD/CNH 汇率：接近实时
-- 布伦特原油：**每日收盘价**（非实时，数据为上一交易日）
-- 免费注册：https://www.alphavantage.co/support/#api-key
-
-### 飞书推送
-- 完全免费，国内网络直连
-- 支持私聊和群聊
-- 通过 `feishu_setup.py` 扫码自动配置
-
-### Telegram 推送
-- 完全免费，无消息数量限制
-- **国内网络需要翻墙**
-
-## 🛡️ 安全建议
-
-1. **保护API密钥**: 不要公开`config.py`或`.env`文件
-2. **使用环境变量**: 生产环境建议使用环境变量
-3. **定期更新**: 保持依赖包最新版本
-4. **访问限制**: 服务器部署时配置防火墙
-
-## 🤝 贡献指南
-
-欢迎提交Issue和Pull Request！
-
-1. Fork项目
-2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 开启Pull Request
-
-## 📄 许可证
-
-本项目基于MIT许可证开源。
-
-## 📞 支持
-
-- 查看详细文档: [setup_guide.md](setup_guide.md)
-- 报告问题: GitHub Issues
-- 邮件支持: 请联系项目维护者
 
 ---
 
-**开始监控你的资产价格吧！** 🚀
+## 📊 数据源
+
+| 数据源 | 用途 | 费用 |
+|--------|------|------|
+| 腾讯财经 API | A股/港股/全球指数实时行情 | 免费 |
+| Binance API | 加密货币实时价格 | 免费 |
+| Alpha Vantage | 汇率/原油（可选） | 免费500次/天 |
+
+> AKShare 因网络环境问题暂时停用，后续视情况恢复。
+
+---
+
+## 🛡️ 安全提醒
+
+- 不要将 `config.py` 提交到 Git（已加入 `.gitignore`）
+- 飞书 App Secret 请妥善保管
+
+## 📄 许可证
+
+MIT License
