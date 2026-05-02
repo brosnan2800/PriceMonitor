@@ -643,14 +643,14 @@ def get_global_index_quote(alias: str) -> Optional[Dict]:
 def get_us_stock_quote(symbol: str) -> Optional[Dict]:
     """
     获取美股实时行情
-    主接口：腾讯财经（us.AAPL 格式）
+    主接口：腾讯财经（usAAPL 格式，无点号）
     备接口：AKShare stock_us_spot_em
     symbol: 美股代码，如 'AAPL', 'NVDA'
     """
     s = symbol.strip().upper()
-    # ── 方案A：腾讯财经 ──
+    # ── 方案A：腾讯财经（格式 usNVDA，无点号） ──
     try:
-        tencent_code = f"us.{s}"
+        tencent_code = f"us{s}"
         resp = requests.get(_TENCENT_QUOTE_URL.format(symbols=tencent_code), timeout=5)
         resp.encoding = "gbk"
         for line in resp.text.splitlines():
