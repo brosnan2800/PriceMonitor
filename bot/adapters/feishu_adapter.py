@@ -202,15 +202,22 @@ class FeishuAdapter(BaseAdapter):
             operator = ev.operator if ev else None
             action = ev.action if ev else None
             user_id = (operator.open_id or "") if operator else ""
-            # 合并 button value 和 form_value（input 组件提交时携带）
             btn_value = dict(action.value or {}) if action else {}
-            form_value = {}
-            if action and hasattr(action, "form_value") and action.form_value:
-                form_value = dict(action.form_value)
-            merged = {**btn_value, **form_value}
-            callback_data = json.dumps(merged, ensure_ascii=False)
+            tag = getattr(action, "tag", None) if action else None
 
-            logger.debug(f"卡片按钮回调: user={user_id} data={callback_data}")
+            if tag == "input":
+                # 输入框独立回调：用 name + input_value 组装数据
+                name = getattr(action, "name", "symbol") or "symbol"
+                input_value = getattr(action, "input_value", None) or ""
+                # 从 name 推断 action 类型（命名规则：{action}_{field}）
+                # 这里 name="symbol" 对应 do_quote
+                merged = {"action": "do_quote", name: input_value}
+            else:
+                # 普通按钮回调
+                merged = dict(btn_value)
+
+            callback_data = json.dumps(merged, ensure_ascii=False)
+            logger.info(f"[card_action] tag={tag} merged={callback_data}")
 
             inc = IncomingMessage(
                 platform="feishu",
@@ -244,7 +251,7 @@ def _build_feishu_card(card: OutgoingCard) -> Dict:
     if card.input_field or card.buttons:
         elements.append({"tag": "hr"})
 
-    # 输入框 + 提交按钮
+    # 输入框（用户按 Enter 触发回调，无需额外按钮）
     if card.input_field:
         f = card.input_field
         elements.append({
@@ -254,12 +261,6 @@ def _build_feishu_card(card: OutgoingCard) -> Dict:
                     "tag": "input",
                     "name": f.name,
                     "placeholder": {"tag": "plain_text", "content": f.placeholder},
-                },
-                {
-                    "tag": "button",
-                    "text": {"tag": "plain_text", "content": f.submit_label},
-                    "type": f.submit_style,
-                    "value": {"action": f.action},
                 }
             ]
         })

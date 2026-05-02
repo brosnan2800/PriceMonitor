@@ -41,7 +41,7 @@ def quote_input_card() -> OutgoingCard:
             action="do_quote",
             submit_label="查询 🔍",
         ),
-        footer="也可直接发送 /quote 600519"
+        footer="输入后按 Enter 查询，或直接发送 /quote 600519"
     )
 
 
