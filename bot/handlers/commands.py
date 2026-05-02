@@ -13,7 +13,8 @@ if TYPE_CHECKING:
     from bot.adapters.base import BaseAdapter, IncomingMessage
 
 from bot.formatters.cards import (
-    help_card, menu_card, quote_card, quote_input_card, watchlist_card, tasks_card,
+    help_card, menu_card, quote_card, quote_input_card, add_input_card,
+    watchlist_card, tasks_card,
     newtask_type_card, announcement_card, settings_card, alert_setup_card
 )
 from data import db
@@ -178,12 +179,22 @@ class CommandHandler:
     def _cmd_add(self, msg: "IncomingMessage") -> None:
         parts = msg.text.split(maxsplit=1)
         if len(parts) < 2:
-            self.adapter.send_text(msg.user_id, "用法：`/add 600519` 或 `/add 贵州茅台`")
+            self.adapter.send_card(msg.user_id, add_input_card())
             return
+        self._fetch_and_add(msg.user_id, parts[1].strip())
 
-        keyword = parts[1].strip()
+    def _do_add_from_card(self, msg: "IncomingMessage", data: Dict) -> None:
+        """处理 add_input_card 提交的 input 值"""
+        symbol = (data.get("symbol") or "").strip()
+        if not symbol:
+            self.adapter.send_text(msg.user_id, "❓ 请输入股票代码或名称")
+            return
+        self._fetch_and_add(msg.user_id, symbol)
+
+    def _fetch_and_add(self, user_id: str, keyword: str) -> None:
+        """核心添加自选逻辑，供 /add 和卡片输入共用"""
         symbol = keyword.upper()
-        self.adapter.send_text(msg.user_id, f"🔍 正在查询 {keyword}...")
+        self.adapter.send_text(user_id, f"🔍 正在查询 {keyword}...")
 
         data = auto_quote(symbol)
 
@@ -197,25 +208,25 @@ class CommandHandler:
                 lines = [f"找到 {len(matches)} 个结果，请用代码添加："]
                 for m in matches:
                     lines.append(f"　`/add {m['symbol']}`　{m['name']}")
-                self.adapter.send_text(msg.user_id, "\n".join(lines))
+                self.adapter.send_text(user_id, "\n".join(lines))
                 return
 
         if not data:
-            self.adapter.send_error(msg.user_id, f"未找到 `{keyword}`，请检查代码或名称")
+            self.adapter.send_error(user_id, f"未找到 `{keyword}`，请检查代码或名称")
             return
 
         success = db.add_watchlist(
-            msg.user_id, symbol,
+            user_id, symbol,
             data.get("asset_type", "unknown"),
             data.get("name", symbol)
         )
         if success:
             self.adapter.send_success(
-                msg.user_id,
+                user_id,
                 f"已添加 **{data.get('name', symbol)}** ({symbol}) 到自选"
             )
         else:
-            self.adapter.send_text(msg.user_id, f"ℹ️ {symbol} 已在自选中")
+            self.adapter.send_text(user_id, f"ℹ️ {symbol} 已在自选中")
 
     def _cmd_remove(self, msg: "IncomingMessage") -> None:
         parts = msg.text.split(maxsplit=1)
@@ -322,12 +333,10 @@ class CommandHandler:
             "go_remove_watchlist":  lambda: self._cmd_watchlist(msg),  # 显示带删除按钮的列表
             "go_tasks":             lambda: self._cmd_tasks(msg),
             "go_newtask":           lambda: self._cmd_newtask(msg),
-            "go_add":               lambda: self.adapter.send_text(
-                msg.user_id,
-                "请输入要添加到自选的代码，例如：\n"
-                "　`/add 600519`（A股）\n"
-                "　`/add BTC`（加密货币）"
+            "go_add":               lambda: self.adapter.send_card(
+                msg.user_id, add_input_card()
             ),
+            "do_add":               lambda: self._do_add_from_card(msg, data),
             "go_alerts":            lambda: self._cmd_alert(msg),
             "go_settings":          lambda: self._cmd_settings(msg),
             "go_quiet":             lambda: self._cmd_quiet(msg),

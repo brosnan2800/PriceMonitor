@@ -36,14 +36,33 @@ def quote_input_card() -> OutgoingCard:
             "　**指数** — `SPX`（标普500）/ `HSI`（恒指）"
         ),
         input_field=CardInput(
-            name="symbol",
+            name="do_quote.symbol",
             placeholder="输入代码或名称，如 600519 / BTC / AAPL",
             action="do_quote",
-            submit_label="查询 🔍",
         ),
         footer="输入后按 Enter 查询，或直接发送 /quote 600519"
     )
 
+
+
+def add_input_card() -> OutgoingCard:
+    """添加自选输入卡片"""
+    return OutgoingCard(
+        title="⭐ 添加自选",
+        content=(
+            "请在下方输入要添加的代码：\n\n"
+            "　**A股** — `600519` 或 `贵州茅台`\n"
+            "　**港股** — `00700`\n"
+            "　**美股** — `AAPL`\n"
+            "　**加密** — `BTC`"
+        ),
+        input_field=CardInput(
+            name="do_add.symbol",
+            placeholder="输入代码或名称，如 600519 / BTC / AAPL",
+            action="do_add",
+        ),
+        footer="输入后按 Enter 添加，或直接发送 /add 600519"
+    )
 
 
 def quote_card(data: Dict) -> OutgoingCard:

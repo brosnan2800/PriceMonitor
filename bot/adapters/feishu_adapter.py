@@ -206,12 +206,14 @@ class FeishuAdapter(BaseAdapter):
             tag = getattr(action, "tag", None) if action else None
 
             if tag == "input":
-                # 输入框独立回调：用 name + input_value 组装数据
-                name = getattr(action, "name", "symbol") or "symbol"
+                # 输入框回调：name 格式为 "{action}.{field}"，如 "do_quote.symbol"
+                name = getattr(action, "name", "") or ""
                 input_value = getattr(action, "input_value", None) or ""
-                # 从 name 推断 action 类型（命名规则：{action}_{field}）
-                # 这里 name="symbol" 对应 do_quote
-                merged = {"action": "do_quote", name: input_value}
+                if "." in name:
+                    action_name, field_name = name.split(".", 1)
+                else:
+                    action_name, field_name = "do_quote", name or "symbol"
+                merged = {"action": action_name, field_name: input_value}
             else:
                 # 普通按钮回调
                 merged = dict(btn_value)
