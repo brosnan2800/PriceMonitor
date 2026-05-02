@@ -283,9 +283,10 @@ def _build_feishu_card(card: OutgoingCard) -> Dict:
             if ff.label:
                 input_elem["label"] = {"tag": "plain_text", "content": ff.label}
             form_elements.append(input_elem)
-        # 提交按钮放在 form 内
+        # 提交按钮放在 form 内（飞书要求 form 内所有交互元素必须有 name）
         form_elements.append({
             "tag": "button",
+            "name": "submit_btn",
             "text": {"tag": "plain_text", "content": f.submit_label},
             "type": "primary",
             "action_type": "form_submit",
