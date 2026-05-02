@@ -145,9 +145,8 @@ class CommandHandler:
         symbol = keyword.upper()
         self.adapter.send_text(user_id, f"🔍 正在查询 {keyword}...")
 
-        data = auto_quote(symbol)
-
-        if not data and not symbol.isdigit() and symbol not in _SKIP_SEARCH:
+        # 非数字且非已知加密/指数代码 → 先名称搜索，避免用名字当代码查询产生误报
+        if not symbol.isdigit() and symbol not in _SKIP_SEARCH:
             matches = search_stock(keyword)
             if len(matches) == 1:
                 data = auto_quote(matches[0]["symbol"])
@@ -157,6 +156,11 @@ class CommandHandler:
                     lines.append(f"　`/quote {m['symbol']}`　{m['name']}")
                 self.adapter.send_text(user_id, "\n".join(lines))
                 return
+            else:
+                # 搜索无结果，最后尝试直接查（如英文股票代码 AAPL）
+                data = auto_quote(symbol)
+        else:
+            data = auto_quote(symbol)
 
         if not data:
             self.adapter.send_text(
@@ -196,20 +200,22 @@ class CommandHandler:
         symbol = keyword.upper()
         self.adapter.send_text(user_id, f"🔍 正在查询 {keyword}...")
 
-        data = auto_quote(symbol)
-
-        # 代码查不到且不是纯数字/加密货币 → 尝试名称搜索
-        if not data and not symbol.isdigit() and symbol not in _SKIP_SEARCH:
+        # 非数字且非已知加密/指数代码 → 先名称搜索，避免用名字当代码查询产生误报
+        if not symbol.isdigit() and symbol not in _SKIP_SEARCH:
             matches = search_stock(keyword)
             if len(matches) == 1:
-                data = auto_quote(matches[0]["symbol"])
                 symbol = matches[0]["symbol"]
+                data = auto_quote(symbol)
             elif len(matches) > 1:
                 lines = [f"找到 {len(matches)} 个结果，请用代码添加："]
                 for m in matches:
                     lines.append(f"　`/add {m['symbol']}`　{m['name']}")
                 self.adapter.send_text(user_id, "\n".join(lines))
                 return
+            else:
+                data = auto_quote(symbol)
+        else:
+            data = auto_quote(symbol)
 
         if not data:
             self.adapter.send_error(user_id, f"未找到 `{keyword}`，请检查代码或名称")
