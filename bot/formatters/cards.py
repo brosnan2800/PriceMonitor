@@ -46,7 +46,7 @@ def quote_input_card() -> OutgoingCard:
 
 
 
-    """单支行情卡片"""
+def quote_card(data: Dict) -> OutgoingCard:
     name = data.get("name", data.get("symbol", ""))
     symbol = data.get("symbol", "")
     price = data.get("price", 0)
