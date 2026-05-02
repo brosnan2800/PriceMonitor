@@ -640,6 +640,86 @@ def get_global_index_quote(alias: str) -> Optional[Dict]:
     return None
 
 
+def get_us_stock_quote(symbol: str) -> Optional[Dict]:
+    """
+    获取美股实时行情
+    主接口：腾讯财经（us.AAPL 格式）
+    备接口：AKShare stock_us_spot_em
+    symbol: 美股代码，如 'AAPL', 'NVDA'
+    """
+    s = symbol.strip().upper()
+    # ── 方案A：腾讯财经 ──
+    try:
+        tencent_code = f"us.{s}"
+        resp = requests.get(_TENCENT_QUOTE_URL.format(symbols=tencent_code), timeout=5)
+        resp.encoding = "gbk"
+        for line in resp.text.splitlines():
+            if s in line and "~" in line:
+                inner = line.split("~")
+                if len(inner) < 35:
+                    continue
+                name = inner[1].strip().replace(" ", "") or s
+                price = float(inner[3]) if inner[3] else 0.0
+                if price == 0:
+                    continue
+                change_amt = float(inner[31]) if len(inner) > 31 and inner[31] else 0.0
+                change_pct = float(inner[32]) if len(inner) > 32 and inner[32] else 0.0
+                high = float(inner[33]) if len(inner) > 33 and inner[33] else 0.0
+                low = float(inner[34]) if len(inner) > 34 and inner[34] else 0.0
+                return {
+                    "symbol": s,
+                    "name": name,
+                    "asset_type": TYPE_US_STOCK,
+                    "price": price,
+                    "change": change_amt,
+                    "change_pct": change_pct,
+                    "open": float(inner[5]) if inner[5] else 0.0,
+                    "high": high,
+                    "low": low,
+                    "volume": 0.0,
+                    "turnover": 0.0,
+                    "market_cap": 0.0,
+                    "pe_ratio": 0.0,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "source": "腾讯财经"
+                }
+    except Exception as e:
+        logger.debug(f"腾讯财经美股接口失败 {s}: {e}")
+
+    # ── 方案B：AKShare 美股快照 ──
+    ak = _lazy_akshare()
+    if ak:
+        try:
+            df = ak.stock_us_spot_em()
+            row = df[df["代码"].str.upper() == s]
+            if row.empty:
+                row = df[df["代码"].str.upper().str.endswith(f".{s}")]
+            if not row.empty:
+                r = row.iloc[0]
+                return {
+                    "symbol": s,
+                    "name": str(r.get("名称", s)),
+                    "asset_type": TYPE_US_STOCK,
+                    "price": float(r.get("最新价", 0) or 0),
+                    "change": float(r.get("涨跌额", 0) or 0),
+                    "change_pct": float(r.get("涨跌幅", 0) or 0),
+                    "open": float(r.get("今开", 0) or 0),
+                    "high": float(r.get("最高", 0) or 0),
+                    "low": float(r.get("最低", 0) or 0),
+                    "volume": float(r.get("成交量", 0) or 0),
+                    "turnover": float(r.get("成交额", 0) or 0),
+                    "market_cap": float(r.get("总市值", 0) or 0),
+                    "pe_ratio": float(r.get("市盈率-动态", 0) or 0),
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "source": "AKShare/东方财富美股"
+                }
+        except Exception as e:
+            logger.debug(f"AKShare 美股快照失败 {s}: {e}")
+
+    logger.warning(f"未找到美股: {s}")
+    return None
+
+
 def auto_quote(symbol: str) -> Optional[Dict]:
     """
     自动识别资产类型并查询行情
@@ -666,6 +746,10 @@ def auto_quote(symbol: str) -> Optional[Dict]:
     # 全球指数：美指/恒指/日经等（含中文别名）
     if s in _GLOBAL_INDEX_MAP or symbol in _GLOBAL_INDEX_MAP:
         return get_global_index_quote(s if s in _GLOBAL_INDEX_MAP else symbol)
+
+    # 美股：纯英文字母（1-5位，如 AAPL NVDA TSLA GOOG MSFT AMZN META）
+    if s.isalpha() and 1 <= len(s) <= 5:
+        return get_us_stock_quote(s)
 
     # 默认尝试A股
     return get_stock_quote(s)

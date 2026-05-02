@@ -32,7 +32,7 @@ cd "$SCRIPT_DIR" || { echo "❌ 找不到项目目录"; exit 1; }
 
 # ── 3. 后台启动 ────────────────────────────────────────
 echo "▶  启动机器人（后台运行，日志 → $LOG_FILE）..."
-nohup python3 bot/app.py >> "$LOG_FILE" 2>&1 &
+nohup python3 bot/app.py > /dev/null 2>&1 &
 NEW_PID=$!
 echo "$NEW_PID" > "$PID_FILE"
 
