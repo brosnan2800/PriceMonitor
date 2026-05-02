@@ -21,7 +21,7 @@ from typing import Callable, Dict, Optional
 
 import requests
 
-from .base import BaseAdapter, IncomingMessage, OutgoingCard
+from .base import BaseAdapter, CardInput, IncomingMessage, OutgoingCard
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +202,13 @@ class FeishuAdapter(BaseAdapter):
             operator = ev.operator if ev else None
             action = ev.action if ev else None
             user_id = (operator.open_id or "") if operator else ""
-            callback_data = json.dumps(action.value or {}, ensure_ascii=False) if action else "{}"
+            # 合并 button value 和 form_value（input 组件提交时携带）
+            btn_value = dict(action.value or {}) if action else {}
+            form_value = {}
+            if action and hasattr(action, "form_value") and action.form_value:
+                form_value = dict(action.form_value)
+            merged = {**btn_value, **form_value}
+            callback_data = json.dumps(merged, ensure_ascii=False)
 
             logger.debug(f"卡片按钮回调: user={user_id} data={callback_data}")
 
@@ -234,12 +240,32 @@ def _build_feishu_card(card: OutgoingCard) -> Dict:
             "text": {"tag": "lark_md", "content": card.content}
         })
 
-    # 分隔线
-    if card.buttons:
+    # 分隔线 + 交互区（input_field 优先于 buttons）
+    if card.input_field or card.buttons:
         elements.append({"tag": "hr"})
 
-    # 按钮行
-    if card.buttons:
+    # 输入框 + 提交按钮
+    if card.input_field:
+        f = card.input_field
+        elements.append({
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "input",
+                    "name": f.name,
+                    "placeholder": {"tag": "plain_text", "content": f.placeholder},
+                },
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": f.submit_label},
+                    "type": f.submit_style,
+                    "value": {"action": f.action},
+                }
+            ]
+        })
+
+    # 按钮行（无 input_field 时渲染）
+    elif card.buttons:
         btn_style_map = {
             "primary": "primary",
             "danger": "danger",

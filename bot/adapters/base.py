@@ -33,12 +33,23 @@ class CardButton:
 
 
 @dataclass
+class CardInput:
+    """卡片输入框定义（飞书交互卡片 input 组件）"""
+    name: str                   # 回调 form_value 中的 key
+    placeholder: str            # 占位提示文字
+    action: str                 # 提交按钮的 action 标识
+    submit_label: str = "确认 ✓"
+    submit_style: str = "primary"
+
+
+@dataclass
 class OutgoingCard:
     """平台无关的卡片消息结构（各适配器自行渲染）"""
     title: str
     content: str                                      # 正文（Markdown-like）
     buttons: List[CardButton] = field(default_factory=list)
     footer: Optional[str] = None
+    input_field: Optional[CardInput] = None           # 输入框（有则渲染 input+提交按钮）
 
 
 class BaseAdapter(ABC):

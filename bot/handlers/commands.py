@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from bot.adapters.base import BaseAdapter, IncomingMessage
 
 from bot.formatters.cards import (
-    help_card, menu_card, quote_card, watchlist_card, tasks_card,
+    help_card, menu_card, quote_card, quote_input_card, watchlist_card, tasks_card,
     newtask_type_card, announcement_card, settings_card, alert_setup_card
 )
 from data import db
@@ -126,42 +126,46 @@ class CommandHandler:
     def _cmd_quote(self, msg: "IncomingMessage") -> None:
         parts = msg.text.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip():
-            self.adapter.send_text(
-                msg.user_id,
-                "请输入股票代码或名称，例如：\n`/quote 600519`\n`/quote 贵州茅台`\n`/quote 00700`\n`/quote BTC`"
-            )
+            # 无参数时弹出输入卡片
+            self.adapter.send_card(msg.user_id, quote_input_card())
             return
+        self._fetch_and_send_quote(msg.user_id, parts[1].strip())
 
-        keyword = parts[1].strip()
+    def _do_quote_from_card(self, msg: "IncomingMessage", data: Dict) -> None:
+        """处理 quote_input_card 提交的 form_value"""
+        symbol = (data.get("symbol") or "").strip()
+        if not symbol:
+            self.adapter.send_text(msg.user_id, "❓ 请输入股票代码或名称")
+            return
+        self._fetch_and_send_quote(msg.user_id, symbol)
+
+    def _fetch_and_send_quote(self, user_id: str, keyword: str) -> None:
+        """核心查询逻辑，供 /quote 和卡片输入共用"""
         symbol = keyword.upper()
-        self.adapter.send_text(msg.user_id, f"🔍 正在查询 {keyword}...")
+        self.adapter.send_text(user_id, f"🔍 正在查询 {keyword}...")
 
-        # 先尝试直接按代码查
         data = auto_quote(symbol)
 
-        # 查不到且输入不是纯数字/加密货币代码 → 尝试名称搜索
         if not data and not symbol.isdigit() and symbol not in _SKIP_SEARCH:
             matches = search_stock(keyword)
             if len(matches) == 1:
-                # 唯一匹配，直接查
                 data = auto_quote(matches[0]["symbol"])
             elif len(matches) > 1:
-                # 多个匹配，列出让用户选
                 lines = [f"找到 {len(matches)} 个结果，请用代码查询："]
                 for m in matches:
                     lines.append(f"　`/quote {m['symbol']}`　{m['name']}")
-                self.adapter.send_text(msg.user_id, "\n".join(lines))
+                self.adapter.send_text(user_id, "\n".join(lines))
                 return
 
         if not data:
             self.adapter.send_text(
-                msg.user_id,
+                user_id,
                 f"❌ 未找到 `{keyword}` 的行情数据\n\n"
                 "支持：\n• A股代码（如 `600519`）\n• 港股代码（如 `00700`）\n• 加密货币（如 `BTC`）\n• A股名称（如 `贵州茅台`）"
             )
             return
 
-        self.adapter.send_card(msg.user_id, quote_card(data))
+        self.adapter.send_card(user_id, quote_card(data))
 
     def _cmd_watchlist(self, msg: "IncomingMessage") -> None:
         items = db.get_watchlist(msg.user_id)
@@ -310,13 +314,10 @@ class CommandHandler:
         logger.debug(f"回调: {action} {data} from {msg.user_id}")
 
         routing = {
-            "go_quote":             lambda: self.adapter.send_text(
-                msg.user_id,
-                "请直接输入代码或名称查询，例如：\n"
-                "　`600519`（A股）　`00700`（港股）\n"
-                "　`BTC`（加密货币）　`SPX`（标普500）\n"
-                "也可发送 `/quote 600519`"
+            "go_quote":             lambda: self.adapter.send_card(
+                msg.user_id, quote_input_card()
             ),
+            "do_quote":             lambda: self._do_quote_from_card(msg, data),
             "go_watchlist":         lambda: self._cmd_watchlist(msg),
             "go_remove_watchlist":  lambda: self._cmd_watchlist(msg),  # 显示带删除按钮的列表
             "go_tasks":             lambda: self._cmd_tasks(msg),
