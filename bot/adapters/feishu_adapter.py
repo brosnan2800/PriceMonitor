@@ -202,6 +202,18 @@ class FeishuAdapter(BaseAdapter):
             operator = ev.operator if ev else None
             action = ev.action if ev else None
             user_id = (operator.open_id or "") if operator else ""
+
+            # 去重：飞书卡片回调也可能重发，用 event_id 去重
+            event_id = getattr(event, "header", None)
+            event_id = getattr(event_id, "event_id", None) if event_id else None
+            if event_id:
+                if event_id in self._seen_ids:
+                    logger.debug(f"重复卡片回调已忽略: {event_id}")
+                    return resp
+                self._seen_ids.append(event_id)
+                if len(self._seen_ids) > 200:
+                    self._seen_ids.pop(0)
+
             btn_value = dict(action.value or {}) if action else {}
             tag = getattr(action, "tag", None) if action else None
 
