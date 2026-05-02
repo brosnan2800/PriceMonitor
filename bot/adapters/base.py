@@ -43,13 +43,32 @@ class CardInput:
 
 
 @dataclass
+class CardFormField:
+    """表单中的单个输入字段"""
+    name: str           # 字段名（提交后在 form_value 中作为 key）
+    label: str          # 字段标签文字
+    placeholder: str = ""
+    required: bool = False
+
+
+@dataclass
+class CardForm:
+    """多输入框表单（飞书 form 容器，一次提交获取所有字段值）"""
+    fields: List[CardFormField] = field(default_factory=list)
+    submit_label: str = "确认"
+    submit_action: str = ""       # 路由到哪个 handler
+    submit_data: Dict = field(default_factory=dict)   # 额外附带数据（如预设 symbol）
+
+
+@dataclass
 class OutgoingCard:
     """平台无关的卡片消息结构（各适配器自行渲染）"""
     title: str
     content: str                                      # 正文（Markdown-like）
     buttons: List[CardButton] = field(default_factory=list)
     footer: Optional[str] = None
-    input_field: Optional[CardInput] = None           # 输入框（有则渲染 input+提交按钮）
+    input_field: Optional[CardInput] = None           # 单输入框（Enter 提交）
+    form: Optional[CardForm] = None                   # 多输入框表单（按钮提交）
 
 
 class BaseAdapter(ABC):

@@ -216,9 +216,10 @@ class FeishuAdapter(BaseAdapter):
 
             btn_value = dict(action.value or {}) if action else {}
             tag = getattr(action, "tag", None) if action else None
+            form_value = getattr(action, "form_value", None) if action else None
 
             if tag == "input":
-                # 输入框回调：name 格式为 "{action}.{field}"，如 "do_quote.symbol"
+                # 单输入框回调（Enter 触发）：name 格式 "{action}.{field}"
                 name = getattr(action, "name", "") or ""
                 input_value = getattr(action, "input_value", None) or ""
                 if "." in name:
@@ -226,6 +227,10 @@ class FeishuAdapter(BaseAdapter):
                 else:
                     action_name, field_name = "do_quote", name or "symbol"
                 merged = {"action": action_name, field_name: input_value}
+            elif form_value:
+                # 多输入框表单提交（form 容器内的按钮触发，form_value 含所有字段）
+                merged = dict(btn_value)
+                merged.update(dict(form_value))
             else:
                 # 普通按钮回调
                 merged = dict(btn_value)
@@ -261,12 +266,39 @@ def _build_feishu_card(card: OutgoingCard) -> Dict:
             "text": {"tag": "lark_md", "content": card.content}
         })
 
-    # 分隔线 + 交互区（input_field 优先于 buttons）
-    if card.input_field or card.buttons:
+    # 分隔线 + 交互区（form 优先，其次 input_field，其次 buttons）
+    if card.form or card.input_field or card.buttons:
         elements.append({"tag": "hr"})
 
-    # 输入框（用户按 Enter 触发回调，无需额外按钮）
-    if card.input_field:
+    # 多输入框表单（飞书 form 容器，一次提交获取所有字段值）
+    if card.form:
+        f = card.form
+        form_elements = []
+        for ff in f.fields:
+            input_elem = {
+                "tag": "input",
+                "name": ff.name,
+                "placeholder": {"tag": "plain_text", "content": ff.placeholder},
+            }
+            if ff.label:
+                input_elem["label"] = {"tag": "plain_text", "content": ff.label}
+            form_elements.append(input_elem)
+        # 提交按钮放在 form 内
+        form_elements.append({
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": f.submit_label},
+            "type": "primary",
+            "action_type": "form_submit",
+            "value": {"action": f.submit_action, **f.submit_data},
+        })
+        elements.append({
+            "tag": "form",
+            "name": "alert_form",
+            "elements": form_elements,
+        })
+
+    # 单输入框（用户按 Enter 触发回调，无需额外按钮）
+    elif card.input_field:
         f = card.input_field
         elements.append({
             "tag": "action",

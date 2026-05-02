@@ -15,7 +15,8 @@ if TYPE_CHECKING:
 from bot.formatters.cards import (
     help_card, menu_card, quote_card, quote_input_card, add_input_card,
     watchlist_card, tasks_card,
-    newtask_type_card, announcement_card, settings_card, alert_setup_card
+    newtask_type_card, announcement_card, settings_card,
+    alert_setup_card, alert_input_card,
 )
 from data import db
 from data.sources.akshare_source import auto_quote, search_stock, _CRYPTO_MAP, _GLOBAL_INDEX_MAP
@@ -292,13 +293,7 @@ class CommandHandler:
     def _cmd_alert(self, msg: "IncomingMessage") -> None:
         alerts = db.get_alerts(msg.user_id)
         if not alerts:
-            self.adapter.send_text(
-                msg.user_id,
-                "🔔 当前没有价格预警\n\n"
-                "查询行情后点击「设置预警 🔔」按钮，或使用：\n"
-                "`/alert 600519 above 2000` — 价格超过2000时提醒\n"
-                "`/alert 600519 change_pct 5` — 涨跌幅超5%时提醒"
-            )
+            self.adapter.send_card(msg.user_id, alert_input_card())
             return
 
         cond_map = {"above": "高于", "below": "低于", "change_pct": "涨跌幅超"}
@@ -307,7 +302,15 @@ class CommandHandler:
             status = "🟢" if a["enabled"] else "⏸️"
             cond = cond_map.get(a["condition"], a["condition"])
             lines.append(f"{status} **{a['symbol']}** {cond} {a['threshold']}")
-        self.adapter.send_text(msg.user_id, "\n".join(lines))
+        from bot.adapters.base import CardButton, OutgoingCard
+        self.adapter.send_card(
+            msg.user_id,
+            OutgoingCard(
+                title="🔔 我的价格预警",
+                content="\n".join(lines),
+                buttons=[CardButton("新增预警 ➕", "go_alert_input", {}, style="primary")],
+            )
+        )
 
     def _cmd_mute(self, msg: "IncomingMessage") -> None:
         # /mute 600519 2h
@@ -344,6 +347,9 @@ class CommandHandler:
             ),
             "do_add":               lambda: self._do_add_from_card(msg, data),
             "go_alerts":            lambda: self._cmd_alert(msg),
+            "go_alert_input":       lambda: self.adapter.send_card(
+                msg.user_id, alert_input_card()
+            ),
             "go_settings":          lambda: self._cmd_settings(msg),
             "go_quiet":             lambda: self._cmd_quiet(msg),
             "go_restart":           lambda: self._cmd_restart(msg),
@@ -351,6 +357,7 @@ class CommandHandler:
             "add_alert":            lambda: self._alert_from_callback(msg, data),
             "remove_watchlist":     lambda: self._remove_from_callback(msg, data),
             "alert_type":           lambda: self._alert_type_callback(msg, data),
+            "do_alert_setup":       lambda: self._do_alert_setup(msg, data),
             "newtask_type":         lambda: self._newtask_type_callback(msg, data),
         }
 
@@ -381,11 +388,74 @@ class CommandHandler:
         self._cmd_watchlist(msg)
 
     def _alert_from_callback(self, msg: "IncomingMessage", data: Dict) -> None:
-        """从行情卡片'设置预警'按钮跳转到预警设置卡片"""
+        """从行情卡片「设置预警 🔔」按钮跳转到预警设置卡片（已知股票代码）"""
         symbol = data.get("symbol", "")
         name = data.get("nm", symbol)
         if symbol:
             self.adapter.send_card(msg.user_id, alert_setup_card(symbol, name))
+
+    def _do_alert_setup(self, msg: "IncomingMessage", data: Dict) -> None:
+        """处理多输入框预警表单提交（form_submit 回调）"""
+        # symbol 可能来自预填（alert_setup_card）或表单字段（alert_input_card）
+        symbol_raw = (data.get("symbol") or data.get("nm") or "").strip()
+        form_symbol = (data.get("symbol") or "").strip()
+        if not form_symbol:
+            self.adapter.send_error(msg.user_id, "请填写股票代码")
+            return
+
+        # 尝试解析股票代码/名称
+        keyword = form_symbol
+        resolved_symbol = keyword.upper()
+        resolved_name = keyword
+
+        if keyword not in _SKIP_SEARCH:
+            results = search_stock(keyword)
+            if results and len(results) == 1:
+                resolved_symbol = results[0].get("code", keyword.upper())
+                resolved_name = results[0].get("name", keyword)
+            elif not results:
+                resolved_symbol = keyword.upper()
+                resolved_name = keyword
+
+        # 解析各阈值字段
+        def _parse_float(val) -> Optional[float]:
+            try:
+                return float(str(val).strip()) if str(val).strip() else None
+            except ValueError:
+                return None
+
+        price_above = _parse_float(data.get("price_above"))
+        price_below = _parse_float(data.get("price_below"))
+        rise_pct    = _parse_float(data.get("rise_pct"))
+        fall_pct    = _parse_float(data.get("fall_pct"))
+
+        if all(v is None for v in [price_above, price_below, rise_pct, fall_pct]):
+            self.adapter.send_error(msg.user_id, "请至少填写一项提醒条件")
+            return
+
+        added = []
+        if price_above is not None:
+            aid = db.add_alert(msg.user_id, resolved_symbol, "above", price_above)
+            added.append(f"⬆️ 价格高于 {price_above}  (#{aid})")
+        if price_below is not None:
+            aid = db.add_alert(msg.user_id, resolved_symbol, "below", price_below)
+            added.append(f"⬇️ 价格低于 {price_below}  (#{aid})")
+        if rise_pct is not None:
+            aid = db.add_alert(msg.user_id, resolved_symbol, "change_pct", abs(rise_pct))
+            added.append(f"📈 涨幅超过 {abs(rise_pct):.1f}%  (#{aid})")
+        if fall_pct is not None:
+            aid = db.add_alert(msg.user_id, resolved_symbol, "change_pct", -abs(fall_pct))
+            added.append(f"📉 跌幅超过 {abs(fall_pct):.1f}%  (#{aid})")
+
+        display = f"{resolved_name} ({resolved_symbol})" if resolved_name != resolved_symbol else resolved_symbol
+        conditions = "\n".join(f"  {c}" for c in added)
+        self.adapter.send_success(
+            msg.user_id,
+            f"价格预警已设置！\n\n"
+            f"**标的：** {display}\n"
+            f"**提醒条件：**\n{conditions}\n\n"
+            f"发送 `/alert` 查看所有预警"
+        )
 
     def _alert_type_callback(self, msg: "IncomingMessage", data: Dict) -> None:
         """用户选择了预警类型，进入对话等待数值输入"""
