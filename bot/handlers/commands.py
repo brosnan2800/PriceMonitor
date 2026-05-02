@@ -542,7 +542,6 @@ class CommandHandler:
         type_prompts = {
             "daily_report": "每日行情报告已选定 ✅\n请选择推送时间：\n`A` 每天15:30收盘后\n`B` 每天09:00开盘前\n`C` 早报+收盘（每天2次）\n\n回复 A/B/C 完成设置",
             "announcement": "股票公告监控已选定 ✅\n请输入要监控的股票代码（多个用逗号分隔）：\n例如：`600519, 000858`",
-            "price_alert":  "价格突破预警已选定 ✅\n请输入格式：`股票代码 above/below/change_pct 阈值`\n例如：`600519 above 2000`",
             "index_report": "指数早报已选定 ✅\n请选择推送时间：\n`A` 每天09:30开盘\n`B` 每天08:00\n\n回复 A/B 完成设置",
         }
         prompt = type_prompts.get(task_type, "请按提示操作")

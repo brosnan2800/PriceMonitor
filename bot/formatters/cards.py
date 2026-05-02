@@ -192,8 +192,8 @@ def menu_card() -> OutgoingCard:
             CardButton("删除自选 🗑", "go_remove_watchlist", {}),
             # 预警&任务行
             CardButton("价格预警 🔔", "go_alerts", {}),
-            CardButton("定时任务 ⏰", "go_tasks", {}),
-            CardButton("新建任务 ➕", "go_newtask", {}),
+            CardButton("定制任务 ⏰", "go_tasks", {}),
+            CardButton("新建定制 ➕", "go_newtask", {}),
             # 控制行
             CardButton("系统设置 ⚙️", "go_settings", {}),
             CardButton("免打扰 🔕", "go_quiet", {}),
@@ -220,9 +220,9 @@ def help_card() -> OutgoingCard:
         "　`/alert 600519 above 2000`  价格超过触发\n"
         "　`/alert 600519 below 1500`  价格跌破触发\n"
         "　`/alert 600519 change_pct 5` 涨跌幅超过触发\n\n"
-        "**⏰ 定时任务**\n"
-        "　`/tasks` 　　查看所有任务\n"
-        "　`/newtask` 　新建推送任务\n"
+        "**⏰ 定制任务**\n"
+        "　`/tasks` 　　查看所有定制任务\n"
+        "　`/newtask` 　新建定制任务\n"
         "　`/deltask 3` 删除任务\n"
         "　`/pause 3` 　暂停/恢复任务\n\n"
         "**🔕 推送控制**\n"
@@ -299,15 +299,14 @@ def tasks_card(tasks: List[Dict]) -> OutgoingCard:
     """任务列表卡片"""
     if not tasks:
         return OutgoingCard(
-            title="⏰ 我的定时任务",
-            content="还没有任何定时任务\n\n发送 `/newtask` 创建第一个任务",
-            buttons=[CardButton("新建任务 ➕", "go_newtask", {}, style="primary")]
+            title="⏰ 我的定制任务",
+            content="还没有任何定制任务\n\n点击下方按钮创建第一个任务",
+            buttons=[CardButton("新建定制 ➕", "go_newtask", {}, style="primary")]
         )
 
     task_type_names = {
         "daily_report": "每日行情报告",
         "announcement": "股票公告监控",
-        "price_alert": "价格突破预警",
         "index_report": "指数早报",
     }
     lines = []
@@ -318,24 +317,24 @@ def tasks_card(tasks: List[Dict]) -> OutgoingCard:
         lines.append(f"{status} **#{t['id']} {type_name}**　`{cron}`")
 
     return OutgoingCard(
-        title=f"⏰ 我的定时任务 ({len(tasks)} 个)",
+        title=f"⏰ 我的定制任务 ({len(tasks)} 个)",
         content="\n".join(lines),
         buttons=[
-            CardButton("新建任务 ➕", "go_newtask", {}, style="primary"),
+            CardButton("新建定制 ➕", "go_newtask", {}, style="primary"),
             CardButton("管理任务 ⚙️", "go_task_manage", {}),
         ]
     )
 
 
 def newtask_type_card() -> OutgoingCard:
-    """新建任务：选择类型"""
+    """新建定制任务：选择类型"""
     return OutgoingCard(
-        title="➕ 新建定时任务",
+        title="➕ 新建定制任务",
         content="请选择任务类型：",
         buttons=[
             CardButton("📊 每日行情报告", "newtask_type", {"type": "daily_report"}, style="primary"),
             CardButton("📢 股票公告监控", "newtask_type", {"type": "announcement"}),
-            CardButton("🔔 价格突破预警", "newtask_type", {"type": "price_alert"}),
+            CardButton("🔔 价格预警设置", "go_alert_input", {}),
             CardButton("📈 指数早报", "newtask_type", {"type": "index_report"}),
         ]
     )
