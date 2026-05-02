@@ -15,7 +15,8 @@ if TYPE_CHECKING:
 from bot.formatters.cards import (
     help_card, menu_card, quote_card, quote_input_card, add_input_card,
     watchlist_card, tasks_card,
-    newtask_type_card, announcement_card, settings_card,
+    newtask_type_card, newtask_time_card, newtask_announcement_card,
+    announcement_card, settings_card,
     alert_setup_card, alert_input_card,
 )
 from data import db
@@ -248,7 +249,8 @@ class CommandHandler:
 
     def _cmd_tasks(self, msg: "IncomingMessage") -> None:
         tasks = db.get_tasks(msg.user_id)
-        self.adapter.send_card(msg.user_id, tasks_card(tasks))
+        alerts = db.get_alerts(msg.user_id)
+        self.adapter.send_card(msg.user_id, tasks_card(tasks, alerts))
 
     def _cmd_newtask(self, msg: "IncomingMessage") -> None:
         self.adapter.send_card(msg.user_id, newtask_type_card())
@@ -359,6 +361,8 @@ class CommandHandler:
             "alert_type":           lambda: self._alert_type_callback(msg, data),
             "do_alert_setup":       lambda: self._do_alert_setup(msg, data),
             "newtask_type":         lambda: self._newtask_type_callback(msg, data),
+            "newtask_confirm":      lambda: self._newtask_confirm_callback(msg, data),
+            "do_newtask_announcement": lambda: self._do_newtask_announcement(msg, data),
         }
 
         handler = routing.get(action)
@@ -539,13 +543,79 @@ class CommandHandler:
 
     def _newtask_type_callback(self, msg: "IncomingMessage", data: Dict) -> None:
         task_type = data.get("type", "")
-        type_prompts = {
-            "daily_report": "每日行情报告已选定 ✅\n请选择推送时间：\n`A` 每天15:30收盘后\n`B` 每天09:00开盘前\n`C` 早报+收盘（每天2次）\n\n回复 A/B/C 完成设置",
-            "announcement": "股票公告监控已选定 ✅\n请输入要监控的股票代码（多个用逗号分隔）：\n例如：`600519, 000858`",
-            "index_report": "指数早报已选定 ✅\n请选择推送时间：\n`A` 每天09:30开盘\n`B` 每天08:00\n\n回复 A/B 完成设置",
-        }
-        prompt = type_prompts.get(task_type, "请按提示操作")
-        self.adapter.send_text(msg.user_id, prompt)
+        if task_type == "daily_report":
+            self.adapter.send_card(msg.user_id, newtask_time_card("daily_report", [
+                {"label": "📈 每天 15:30 收盘后", "cron": "30 15 * * 1-5"},
+                {"label": "🌅 每天 09:00 开盘前", "cron": "0 9 * * 1-5"},
+                {"label": "🔁 每天两次（09:00 + 15:30）", "cron": "0 9,15 * * 1-5"},
+            ]))
+        elif task_type == "index_report":
+            self.adapter.send_card(msg.user_id, newtask_time_card("index_report", [
+                {"label": "🔔 每天 09:30 开盘时", "cron": "30 9 * * 1-5"},
+                {"label": "🌅 每天 08:00 开盘前", "cron": "0 8 * * 1-5"},
+            ]))
+        elif task_type == "announcement":
+            self.adapter.send_card(msg.user_id, newtask_announcement_card())
+        else:
+            self.adapter.send_text(msg.user_id, "未知任务类型")
+
+    def _newtask_confirm_callback(self, msg: "IncomingMessage", data: Dict) -> None:
+        """用户选了推送时间，写入 tasks 表并注册调度"""
+        task_type = data.get("type", "")
+        cron = data.get("cron", "")
+        desc = data.get("desc", cron)
+        if not task_type or not cron:
+            self.adapter.send_error(msg.user_id, "参数缺失，请重新选择")
+            return
+
+        task_id = db.add_task(msg.user_id, task_type, {}, cron)
+
+        # 通知调度器注册新任务
+        from bot.scheduler import TaskScheduler
+        scheduler = TaskScheduler.get_instance()
+        if scheduler:
+            scheduler.register_task_by_id(task_id)
+
+        type_names = {"daily_report": "每日行情报告", "index_report": "指数早报"}
+        type_name = type_names.get(task_type, task_type)
+        self.adapter.send_success(
+            msg.user_id,
+            f"{type_name} 已创建！\n\n"
+            f"**推送时间：** {desc}\n"
+            f"**任务编号：** #{task_id}\n\n"
+            f"发送 `/tasks` 查看所有任务"
+        )
+
+    def _do_newtask_announcement(self, msg: "IncomingMessage", data: Dict) -> None:
+        """公告监控：用户输入股票代码，写入 tasks 表"""
+        raw = data.get("symbols", "").strip()
+        if not raw:
+            self.adapter.send_error(msg.user_id, "请输入股票代码")
+            return
+
+        symbols = [s.strip() for s in raw.replace("，", ",").split(",") if s.strip()]
+        if not symbols:
+            self.adapter.send_error(msg.user_id, "未识别到有效股票代码")
+            return
+
+        config = {"symbols": symbols}
+        cron = "0 9,12,15 * * 1-5"   # 每天 09:00 / 12:00 / 15:00 检查
+        task_id = db.add_task(msg.user_id, "announcement", config, cron)
+
+        from bot.scheduler import TaskScheduler
+        scheduler = TaskScheduler.get_instance()
+        if scheduler:
+            scheduler.register_task_by_id(task_id)
+
+        symbol_str = "、".join(symbols)
+        self.adapter.send_success(
+            msg.user_id,
+            f"股票公告监控已创建！\n\n"
+            f"**监控标的：** {symbol_str}\n"
+            f"**推送时间：** 每个交易日 09:00 / 12:00 / 15:00\n"
+            f"**任务编号：** #{task_id}\n\n"
+            f"发送 `/tasks` 查看所有任务"
+        )
 
     def _cmd_restart(self, msg: "IncomingMessage") -> None:
         """通过飞书触发后台重启（先回复再重启，确保消息发出）"""

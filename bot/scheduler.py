@@ -36,6 +36,12 @@ logger = logging.getLogger(__name__)
 class TaskScheduler:
     """任务调度引擎"""
 
+    _instance: Optional["TaskScheduler"] = None
+
+    @classmethod
+    def get_instance(cls) -> Optional["TaskScheduler"]:
+        return cls._instance
+
     def __init__(self, adapters: Dict[str, "BaseAdapter"]):
         """
         adapters: {"feishu": FeishuAdapter实例, "telegram": TelegramAdapter实例}
@@ -45,6 +51,7 @@ class TaskScheduler:
             timezone="Asia/Shanghai",
             job_defaults={"coalesce": True, "max_instances": 1}
         )
+        TaskScheduler._instance = self
 
     def start(self) -> None:
         # 内置系统任务
@@ -64,6 +71,14 @@ class TaskScheduler:
             if job.id.startswith("user_task_"):
                 self._scheduler.remove_job(job.id)
         self._load_user_jobs()
+
+    def register_task_by_id(self, task_id: int) -> None:
+        """热注册单个新任务（用户新建任务后立即生效，无需重启）"""
+        tasks = db.get_all_enabled_tasks()
+        task = next((t for t in tasks if t["id"] == task_id), None)
+        if task:
+            self._register_task(task)
+            logger.info(f"热注册用户任务 #{task_id}")
 
     # ── 内置任务 ──────────────────────────────────────────────────────
 

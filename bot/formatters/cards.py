@@ -190,12 +190,11 @@ def menu_card() -> OutgoingCard:
             CardButton("查行情 🔍", "go_quote", {}, style="primary"),
             CardButton("我的自选 ⭐", "go_watchlist", {}),
             CardButton("删除自选 🗑", "go_remove_watchlist", {}),
-            # 预警&任务行
-            CardButton("价格预警 🔔", "go_alerts", {}),
-            CardButton("定制任务 ⏰", "go_tasks", {}),
+            # 定制任务行
+            CardButton("定制任务 ⏰", "go_tasks", {}, style="primary"),
             CardButton("新建定制 ➕", "go_newtask", {}),
-            # 控制行
             CardButton("系统设置 ⚙️", "go_settings", {}),
+            # 控制行
             CardButton("免打扰 🔕", "go_quiet", {}),
             CardButton("重启服务 🔄", "go_restart", {}),
         ],
@@ -295,33 +294,47 @@ def alert_input_card() -> OutgoingCard:
     )
 
 
-def tasks_card(tasks: List[Dict]) -> OutgoingCard:
-    """任务列表卡片"""
-    if not tasks:
-        return OutgoingCard(
-            title="⏰ 我的定制任务",
-            content="还没有任何定制任务\n\n点击下方按钮创建第一个任务",
-            buttons=[CardButton("新建定制 ➕", "go_newtask", {}, style="primary")]
-        )
+def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> OutgoingCard:
+    """定制任务列表卡片：分两区显示推送任务 + 价格预警"""
+    alerts = alerts or []
 
     task_type_names = {
-        "daily_report": "每日行情报告",
-        "announcement": "股票公告监控",
-        "index_report": "指数早报",
+        "daily_report": "📊 每日行情报告",
+        "announcement": "📢 股票公告监控",
+        "index_report": "📈 指数早报",
     }
-    lines = []
-    for t in tasks:
-        status = "🟢" if t.get("enabled") else "⏸️"
-        type_name = task_type_names.get(t.get("task_type", ""), t.get("task_type", ""))
-        cron = t.get("cron_expr", "")
-        lines.append(f"{status} **#{t['id']} {type_name}**　`{cron}`")
+    cond_map = {"above": "高于", "below": "低于", "change_pct": "涨跌幅超"}
+
+    sections = []
+
+    # ── 推送任务区 ─────────────────────────────────────
+    if tasks:
+        lines = ["**📋 推送任务**\n"]
+        for t in tasks:
+            status = "🟢" if t.get("enabled") else "⏸️"
+            type_name = task_type_names.get(t.get("task_type", ""), t.get("task_type", ""))
+            cron = t.get("cron_expr", "")
+            lines.append(f"{status} #{t['id']} {type_name}　`{cron}`")
+        sections.append("\n".join(lines))
+    else:
+        sections.append("**📋 推送任务**\n暂无推送任务")
+
+    # ── 价格预警区 ─────────────────────────────────────
+    if alerts:
+        lines = ["\n**🔔 价格预警**\n"]
+        for a in alerts:
+            status = "🟢" if a.get("enabled") else "⏸️"
+            cond = cond_map.get(a["condition"], a["condition"])
+            lines.append(f"{status} #{a['id']} **{a['symbol']}** {cond} {a['threshold']}")
+        sections.append("\n".join(lines))
+    else:
+        sections.append("\n**🔔 价格预警**\n暂无价格预警")
 
     return OutgoingCard(
-        title=f"⏰ 我的定制任务 ({len(tasks)} 个)",
-        content="\n".join(lines),
+        title="⏰ 我的定制任务",
+        content="\n".join(sections),
         buttons=[
             CardButton("新建定制 ➕", "go_newtask", {}, style="primary"),
-            CardButton("管理任务 ⚙️", "go_task_manage", {}),
         ]
     )
 
@@ -337,6 +350,38 @@ def newtask_type_card() -> OutgoingCard:
             CardButton("🔔 价格预警设置", "go_alert_input", {}),
             CardButton("📈 指数早报", "newtask_type", {"type": "index_report"}),
         ]
+    )
+
+
+def newtask_time_card(task_type: str, options: List[Dict]) -> OutgoingCard:
+    """新建定制任务：选择推送时间（按钮选项）"""
+    type_names = {
+        "daily_report": "每日行情报告",
+        "index_report": "指数早报",
+    }
+    type_name = type_names.get(task_type, task_type)
+    buttons = [
+        CardButton(opt["label"], "newtask_confirm",
+                   {"type": task_type, "cron": opt["cron"], "desc": opt["label"]})
+        for opt in options
+    ]
+    return OutgoingCard(
+        title=f"⏰ {type_name} · 选择推送时间",
+        content="请选择何时推送：",
+        buttons=buttons,
+    )
+
+
+def newtask_announcement_card() -> OutgoingCard:
+    """新建股票公告监控：输入股票代码"""
+    return OutgoingCard(
+        title="📢 股票公告监控 · 输入股票",
+        content="请输入要监控的股票代码或名称\n多只股票用逗号分隔，如 `600519, 000858`",
+        input_field=CardInput(
+            name="do_newtask_announcement.symbols",
+            placeholder="如 600519 / 贵州茅台 / 600519,000858",
+            action="do_newtask_announcement",
+        ),
     )
 
 
