@@ -307,9 +307,16 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
 
     sections = []
 
-    # ── 推送任务区 ─────────────────────────────────────
+    # ── 系统默认任务区（内置，始终推送）─────────────────
+    sections.append(
+        "**🔧 系统默认任务**\n"
+        "🟢 📈 指数早报　`工作日 09:00`\n"
+        "🟢 📊 金融日报　`工作日 15:30`"
+    )
+
+    # ── 自定义推送任务区 ──────────────────────────────
     if tasks:
-        lines = ["**📋 推送任务**\n"]
+        lines = ["\n**📋 我的推送任务**\n"]
         for t in tasks:
             status = "🟢" if t.get("enabled") else "⏸️"
             type_name = task_type_names.get(t.get("task_type", ""), t.get("task_type", ""))
@@ -317,7 +324,7 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
             lines.append(f"{status} #{t['id']} {type_name}　`{cron}`")
         sections.append("\n".join(lines))
     else:
-        sections.append("**📋 推送任务**\n暂无推送任务")
+        sections.append("\n**📋 我的推送任务**\n暂无自定义推送任务")
 
     # ── 价格预警区 ─────────────────────────────────────
     if alerts:
