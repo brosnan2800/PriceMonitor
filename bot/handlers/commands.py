@@ -18,6 +18,7 @@ from bot.formatters.cards import (
     newtask_type_card, newtask_time_card, newtask_announcement_card,
     announcement_card, settings_card,
     alert_setup_card, alert_input_card,
+    morning_modules_card, DEFAULT_MORNING_MODULES, DEFAULT_DAILY_MODULES,
 )
 from data import db
 from data.sources.akshare_source import auto_quote, search_stock, _CRYPTO_MAP, _GLOBAL_INDEX_MAP
@@ -363,6 +364,9 @@ class CommandHandler:
             "newtask_type":         lambda: self._newtask_type_callback(msg, data),
             "newtask_confirm":      lambda: self._newtask_confirm_callback(msg, data),
             "do_newtask_announcement": lambda: self._do_newtask_announcement(msg, data),
+            "go_morning_modules":   lambda: self._go_morning_modules(msg, data),
+            "toggle_morning_module": lambda: self._toggle_morning_module(msg, data),
+            "save_morning_modules": lambda: self._save_morning_modules(msg, data),
         }
 
         handler = routing.get(action)
@@ -556,6 +560,17 @@ class CommandHandler:
             ]))
         elif task_type == "announcement":
             self.adapter.send_card(msg.user_id, newtask_announcement_card())
+        elif task_type == "us_news":
+            self.adapter.send_card(msg.user_id, newtask_time_card("us_news", [
+                {"label": "📰 每天 09:00（A股开盘前）", "cron": "0 9 * * 1-5"},
+                {"label": "🌙 每天 22:00（美股收盘后）", "cron": "0 22 * * 1-5"},
+                {"label": "🔁 每天两次（09:00 + 22:00）", "cron": "0 9,22 * * 1-5"},
+            ]))
+        elif task_type == "macro_report":
+            self.adapter.send_card(msg.user_id, newtask_time_card("macro_report", [
+                {"label": "📅 每周一 09:00", "cron": "0 9 * * 1"},
+                {"label": "📅 每天 09:00（实时更新）", "cron": "0 9 * * 1-5"},
+            ]))
         else:
             self.adapter.send_text(msg.user_id, "未知任务类型")
 
@@ -576,7 +591,10 @@ class CommandHandler:
         if scheduler:
             scheduler.register_task_by_id(task_id)
 
-        type_names = {"daily_report": "每日行情报告", "index_report": "指数早报"}
+        type_names = {
+            "daily_report": "每日行情报告", "index_report": "指数早报",
+            "us_news": "美股新闻情绪", "macro_report": "宏观指标月报",
+        }
         type_name = type_names.get(task_type, task_type)
         self.adapter.send_success(
             msg.user_id,
@@ -615,6 +633,56 @@ class CommandHandler:
             f"**推送时间：** 每个交易日 09:00 / 12:00 / 15:00\n"
             f"**任务编号：** #{task_id}\n\n"
             f"发送 `/tasks` 查看所有任务"
+        )
+
+    # ── 早报/日报内容模块定制 ─────────────────────────────────────────
+
+    def _go_morning_modules(self, msg: "IncomingMessage", data: Dict) -> None:
+        """打开模块选择卡片"""
+        report_type = data.get("report_type", "morning")
+        settings = db.get_user_settings(msg.user_id)
+        key = "morning_modules" if report_type == "morning" else "daily_modules"
+        defaults = list(DEFAULT_MORNING_MODULES if report_type == "morning" else DEFAULT_DAILY_MODULES)
+        selected = settings.get(key, defaults)
+        card = morning_modules_card(report_type, selected)
+        self.adapter.send_card(msg.user_id, card)
+
+    def _toggle_morning_module(self, msg: "IncomingMessage", data: Dict) -> None:
+        """切换一个模块的开启/关闭状态，刷新选择卡片"""
+        report_type = data.get("report_type", "morning")
+        module = data.get("module", "")
+        current_str = data.get("current", "")
+        current = set(current_str.split(",")) if current_str else set()
+        current.discard("")  # 去除空字符串
+
+        if module in current:
+            current.discard(module)
+        else:
+            current.add(module)
+
+        card = morning_modules_card(report_type, list(current))
+        self.adapter.send_card(msg.user_id, card)
+
+    def _save_morning_modules(self, msg: "IncomingMessage", data: Dict) -> None:
+        """保存模块选择到 users.settings"""
+        report_type = data.get("report_type", "morning")
+        modules_str = data.get("modules", "")
+        modules = [m for m in modules_str.split(",") if m]
+
+        settings = db.get_user_settings(msg.user_id)
+        key = "morning_modules" if report_type == "morning" else "daily_modules"
+        settings[key] = modules
+        db.update_user_settings(msg.user_id, settings)
+
+        label = "早报" if report_type == "morning" else "日报"
+        module_names = {
+            "a_stock": "A股指数", "us_stock": "美股三大", "hk_stock": "港股恒生",
+            "crypto": "BTC/ETH", "fx": "汇率", "commodity": "原油/黄金",
+        }
+        selected_labels = "、".join(module_names.get(m, m) for m in modules) or "（空）"
+        self.adapter.send_success(
+            msg.user_id,
+            f"✅ {label}内容已更新！\n\n**已选模块：** {selected_labels}\n\n下次推送将按新设置发送。"
         )
 
     def _cmd_restart(self, msg: "IncomingMessage") -> None:

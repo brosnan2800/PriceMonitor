@@ -24,7 +24,11 @@ from apscheduler.triggers.cron import CronTrigger
 if TYPE_CHECKING:
     from bot.adapters.base import BaseAdapter
 
-from bot.formatters.cards import daily_digest_card, announcement_card
+from bot.formatters.cards import (
+    daily_digest_card, announcement_card,
+    morning_modules_card, news_sentiment_card, macro_report_card,
+    DEFAULT_MORNING_MODULES, DEFAULT_DAILY_MODULES,
+)
 from data import db
 from data.sources.akshare_source import (
     auto_quote, get_index_quotes, get_stock_announcements
@@ -146,6 +150,8 @@ class TaskScheduler:
             "announcement":  self._make_announcement_job,
             "price_alert":   self._make_price_alert_job,
             "index_report":  self._make_index_report_job,
+            "us_news":       self._make_us_news_job,
+            "macro_report":  self._make_macro_report_job,
         }
 
         make_fn = handler_map.get(task_type)
@@ -252,6 +258,52 @@ class TaskScheduler:
             db.update_task_last_run(task["id"])
         return job
 
+    def _make_us_news_job(self, task: Dict) -> Callable:
+        def job():
+            user_id = task["user_id"]
+            platform = self._get_user_platform(user_id)
+            adapter = self.adapters.get(platform)
+            if not adapter:
+                return
+            try:
+                from data.sources.alphavantage_source import (
+                    get_news_sentiment, is_configured,
+                )
+                if not is_configured():
+                    adapter.send_text(user_id, "⚠️ Alpha Vantage key 未配置，无法获取新闻情绪")
+                    return
+                cfg = json.loads(task.get("config") or "{}")
+                tickers = cfg.get("tickers", [])
+                items = get_news_sentiment(tickers) or []
+                card = news_sentiment_card(items, tickers)
+                adapter.send_card(user_id, card)
+                db.update_task_last_run(task["id"])
+            except Exception as e:
+                logger.error(f"美股新闻任务失败 task#{task['id']}: {e}")
+        return job
+
+    def _make_macro_report_job(self, task: Dict) -> Callable:
+        def job():
+            user_id = task["user_id"]
+            platform = self._get_user_platform(user_id)
+            adapter = self.adapters.get(platform)
+            if not adapter:
+                return
+            try:
+                from data.sources.alphavantage_source import (
+                    get_macro_summary, is_configured,
+                )
+                if not is_configured():
+                    adapter.send_text(user_id, "⚠️ Alpha Vantage key 未配置，无法获取宏观数据")
+                    return
+                data = get_macro_summary() or []
+                card = macro_report_card(data)
+                adapter.send_card(user_id, card)
+                db.update_task_last_run(task["id"])
+            except Exception as e:
+                logger.error(f"宏观指标任务失败 task#{task['id']}: {e}")
+        return job
+
     # ── 内置任务实现 ──────────────────────────────────────────────────
 
     def _job_daily_digest_all(self) -> None:
@@ -298,8 +350,12 @@ class TaskScheduler:
         if settings.get("quiet_mode"):
             return
 
-        # 获取数据
+        modules = set(settings.get("daily_modules", list(DEFAULT_DAILY_MODULES)))
+
+        # 指数数据（所有模块基础）
         index_data = get_index_quotes()
+
+        # 自选股
         watchlist_items = db.get_watchlist(user_id)
         watchlist_quotes = []
         for item in watchlist_items:
@@ -313,7 +369,10 @@ class TaskScheduler:
             anns = get_stock_announcements(item["symbol"], limit=2, important_only=True)
             announcements.extend(anns)
 
-        card = daily_digest_card(index_data, watchlist_quotes, announcements, [])
+        # 动态模块
+        extra_modules = _fetch_extra_modules(modules)
+
+        card = daily_digest_card(index_data, watchlist_quotes, announcements, [], extra_modules)
         content_hash = hashlib.md5(
             f"{user_id}{datetime.now().strftime('%Y%m%d%H')}".encode()
         ).hexdigest()
@@ -326,9 +385,12 @@ class TaskScheduler:
         if settings.get("quiet_mode"):
             return
 
+        modules = set(settings.get("morning_modules", list(DEFAULT_MORNING_MODULES)))
+
         index_data = get_index_quotes()
-        from bot.formatters.cards import daily_digest_card
-        card = daily_digest_card(index_data, [], [], [])
+        extra_modules = _fetch_extra_modules(modules)
+
+        card = daily_digest_card(index_data, [], [], [], extra_modules)
         card.title = f"🌅 指数早报 · {datetime.now().strftime('%m/%d')}"
         adapter.send_card(user_id, card)
 
@@ -361,3 +423,50 @@ class TaskScheduler:
         job_id = f"user_task_{task_id}"
         if self._scheduler.get_job(job_id):
             self._scheduler.remove_job(job_id)
+
+
+# ── 模块数据拉取 ───────────────────────────────────────────────────────
+
+def _fetch_extra_modules(modules: set) -> Dict:
+    """
+    根据用户选择的模块集合拉取对应数据。
+    腾讯财经模块由 _send_index_report/_send_daily_digest 的 index_data 直接处理；
+    此函数负责 crypto / fx / commodity 的补充数据。
+    """
+    extra: Dict = {}
+
+    if "crypto" in modules:
+        try:
+            from data.sources.akshare_source import get_crypto_prices
+            extra["crypto"] = get_crypto_prices(["BTC", "ETH"])
+        except Exception as e:
+            logger.warning(f"crypto 模块拉取失败: {e}")
+
+    av_needed = modules & {"fx", "commodity"}
+    if av_needed:
+        try:
+            from data.sources.alphavantage_source import (
+                get_fx_rates_batch, get_commodities_batch, is_configured,
+            )
+            if is_configured():
+                if "fx" in modules:
+                    fx_raw = get_fx_rates_batch([("USD", "CNY"), ("EUR", "CNY"), ("USD", "JPY")])
+                    fx_list = []
+                    for pair, rate in (fx_raw or {}).items():
+                        fx_list.append({"name": pair, "rate": rate})
+                    extra["fx"] = fx_list
+                if "commodity" in modules:
+                    comm_raw = get_commodities_batch(["WTI", "BRENT", "NATURAL_GAS"])
+                    comm_list = []
+                    for name, price in (comm_raw or {}).items():
+                        unit_map = {"WTI": "桶", "BRENT": "桶", "NATURAL_GAS": "MMBtu"}
+                        comm_list.append({
+                            "name": name,
+                            "price": price,
+                            "unit": unit_map.get(name, ""),
+                        })
+                    extra["commodity"] = comm_list
+        except Exception as e:
+            logger.warning(f"Alpha Vantage 模块拉取失败: {e}")
+
+    return extra

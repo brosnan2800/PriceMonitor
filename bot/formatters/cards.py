@@ -138,8 +138,13 @@ def watchlist_card(items: List[Dict], quote_map: Dict[str, Dict]) -> OutgoingCar
 
 
 def daily_digest_card(index_data: List[Dict], watchlist_data: List[Dict],
-                      announcements: List[Dict], forex_data: List[Dict]) -> OutgoingCard:
-    """每日聚合日报卡片"""
+                      announcements: List[Dict], forex_data: List[Dict],
+                      extra_modules: Optional[Dict] = None) -> OutgoingCard:
+    """
+    每日聚合日报卡片
+    extra_modules: {"crypto": [...], "fx": [...], "commodity": [...]}
+    """
+    extra_modules = extra_modules or {}
     lines = []
 
     # 指数
@@ -165,17 +170,43 @@ def daily_digest_card(index_data: List[Dict], watchlist_data: List[Dict],
             lines.append(f"　• {ann['symbol']} {ann['title'][:20]}...")
         lines.append("")
 
-    # 汇率/大宗
-    if forex_data:
-        lines.append("**💱 汇率 & 大宗**")
-        for f in forex_data:
-            trend = _trend(f.get("change_pct", 0))
-            lines.append(f"　{f.get('name', f.get('symbol', ''))}　{f['price']}　{trend}")
+    # 加密货币模块
+    crypto_list = extra_modules.get("crypto", [])
+    if crypto_list:
+        lines.append("**₿ 加密货币**")
+        for c in crypto_list:
+            trend = _trend(c.get("change_pct", 0))
+            lines.append(f"　{c.get('name', c.get('symbol', ''))}　${c['price']}　{trend}")
+        lines.append("")
+
+    # 汇率模块（AV 或旧 forex_data）
+    fx_list = extra_modules.get("fx", forex_data or [])
+    if fx_list:
+        lines.append("**💱 汇率**")
+        for f in fx_list:
+            rate = f.get("rate") or f.get("price", 0)
+            name = f.get("name", "")
+            chg = f.get("change_pct", 0)
+            trend = _trend(chg) if chg else ""
+            lines.append(f"　{name}　{rate}　{trend}".rstrip())
+        lines.append("")
+
+    # 大宗商品模块
+    commodity_list = extra_modules.get("commodity", [])
+    if commodity_list:
+        lines.append("**🛢️ 大宗商品**")
+        for c in commodity_list:
+            trend = _trend(c.get("change_pct", 0))
+            unit = c.get("unit", "")
+            lines.append(f"　{c['name']}　{c['price']}{'/'+unit if unit else ''}　{trend}")
 
     return OutgoingCard(
         title=f"📊 金融日报 · {datetime.now().strftime('%m/%d %H:%M')}",
         content="\n".join(lines) if lines else "暂无数据",
-        buttons=[CardButton("⚙️ 管理推送", "go_tasks", {})],
+        buttons=[
+            CardButton("⚙️ 自定义内容", "go_morning_modules", {"report_type": "daily"}),
+            CardButton("⚙️ 管理推送", "go_tasks", {}),
+        ],
         footer="默认推送：工作日收盘后  |  /digest 切换推送模式"
     )
 
@@ -302,6 +333,8 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
         "daily_report": "📊 每日行情报告",
         "announcement": "📢 股票公告监控",
         "index_report": "📈 指数早报",
+        "us_news":      "📰 美股新闻情绪",
+        "macro_report": "🌐 宏观指标月报",
     }
     cond_map = {"above": "高于", "below": "低于", "change_pct": "涨跌幅超"}
 
@@ -350,12 +383,18 @@ def newtask_type_card() -> OutgoingCard:
     """新建定制任务：选择类型"""
     return OutgoingCard(
         title="➕ 新建定制任务",
-        content="请选择任务类型：",
+        content=(
+            "请选择任务类型：\n\n"
+            "**📢 股票公告监控** — 指定股票有新公告时提醒\n"
+            "**🔔 价格预警** — 价格/涨跌幅达到阈值时提醒\n"
+            "**📰 美股新闻情绪** — 按自选股过滤，每日情绪分析推送\n"
+            "**🌐 宏观指标月报** — CPI/利率/GDP 等宏观数据推送"
+        ),
         buttons=[
-            CardButton("📊 每日行情报告", "newtask_type", {"type": "daily_report"}, style="primary"),
-            CardButton("📢 股票公告监控", "newtask_type", {"type": "announcement"}),
-            CardButton("🔔 价格预警设置", "go_alert_input", {}),
-            CardButton("📈 指数早报", "newtask_type", {"type": "index_report"}),
+            CardButton("📢 股票公告监控", "newtask_type", {"type": "announcement"}, style="primary"),
+            CardButton("🔔 价格预警", "go_alert_input", {}),
+            CardButton("📰 美股新闻情绪", "newtask_type", {"type": "us_news"}),
+            CardButton("🌐 宏观指标月报", "newtask_type", {"type": "macro_report"}),
         ]
     )
 
@@ -412,7 +451,6 @@ def announcement_card(symbol: str, name: str, announcements: List[Dict]) -> Outg
 
 
 def settings_card(cfg_vals: Dict) -> OutgoingCard:
-    """系统设置卡片"""
     alert_min = cfg_vals.get("alert_min", 5)
     digest_h  = cfg_vals.get("digest_h", 15)
     digest_m  = cfg_vals.get("digest_m", 30)
@@ -438,4 +476,122 @@ def settings_card(cfg_vals: Dict) -> OutgoingCard:
         title="⚙️ 系统设置",
         content=content,
         footer="配置保存在 config.py"
+    )
+
+
+# ── 早报/日报内容模块选择 ─────────────────────────────────────────────
+
+# 所有可选模块定义
+_ALL_MODULES = [
+    ("a_stock",   "🇨🇳 A股指数",    "腾讯财经",      True),   # (id, label, source, needs_av)
+    ("us_stock",  "🇺🇸 美股三大",   "腾讯财经",      False),
+    ("hk_stock",  "🌏 港股恒生",    "腾讯财经",      False),
+    ("crypto",    "₿ BTC/ETH",     "Binance",       False),
+    ("fx",        "💵 汇率",        "Alpha Vantage", True),
+    ("commodity", "🛢️ 原油/黄金",  "Alpha Vantage", True),
+]
+
+DEFAULT_MORNING_MODULES = {"a_stock", "us_stock"}
+DEFAULT_DAILY_MODULES   = {"a_stock", "us_stock"}
+
+def morning_modules_card(report_type: str, selected: List[str]) -> OutgoingCard:
+    """
+    早报/日报内容模块选择卡片
+    report_type: "morning" | "daily"
+    selected: 已选模块 id 列表（当前用户设置）
+    """
+    title_map = {"morning": "🌅 自定义早报内容", "daily": "📊 自定义日报内容"}
+    title = title_map.get(report_type, "⚙️ 自定义推送内容")
+
+    selected_set = set(selected)
+    lines = ["点击模块切换 **开启/关闭**，再点「保存」：\n"]
+
+    av_modules = [m[0] for m in _ALL_MODULES if m[3]]  # 需要 AV key 的模块
+    _ = av_modules  # used below for note
+
+    buttons = []
+    for mod_id, label, source, needs_av in _ALL_MODULES:
+        is_on = mod_id in selected_set
+        mark = "✅" if is_on else "⬜"
+        note = "（需AV Key）" if needs_av else ""
+        lines.append(f"{mark} **{label}** · {source}{note}")
+        btn_label = f"{'关闭' if is_on else '开启'} {label}"
+        buttons.append(CardButton(
+            btn_label,
+            "toggle_morning_module",
+            {"report_type": report_type, "module": mod_id,
+             "current": ",".join(sorted(selected_set))},
+        ))
+
+    buttons.append(CardButton(
+        "💾 保存设置", "save_morning_modules",
+        {"report_type": report_type, "modules": ",".join(sorted(selected_set))},
+        style="primary"
+    ))
+
+    return OutgoingCard(
+        title=title,
+        content="\n".join(lines),
+        buttons=buttons,
+        footer="Alpha Vantage 模块消耗每日配额（免费版25次/天）"
+    )
+
+
+# ── 美股新闻情绪卡片 ──────────────────────────────────────────────────
+
+def news_sentiment_card(items: List[Dict], tickers: List[str] = None) -> OutgoingCard:
+    """美股新闻情绪推送卡片"""
+    if not items:
+        return OutgoingCard(
+            title="📰 美股新闻情绪",
+            content="暂无相关新闻"
+        )
+
+    lines = []
+    for item in items[:8]:
+        sentiment = item.get("sentiment", "Neutral")
+        emoji = {"Bullish": "📈", "Bearish": "📉", "Neutral": "➡️",
+                 "Somewhat-Bullish": "🔼", "Somewhat-Bearish": "🔽"}.get(sentiment, "➡️")
+        tickers_str = " ".join(item.get("tickers", [])[:3])
+        lines.append(f"{emoji} **{item['title'][:50]}**")
+        if tickers_str:
+            lines.append(f"　{tickers_str}　{item.get('source', '')}")
+        lines.append("")
+
+    ticker_label = f"({', '.join(tickers)})" if tickers else ""
+    return OutgoingCard(
+        title=f"📰 美股新闻情绪 {ticker_label} · {datetime.now().strftime('%m/%d')}",
+        content="\n".join(lines).rstrip(),
+        footer="数据来源: Alpha Vantage · 情绪: 📈看多 ➡️中性 📉看空"
+    )
+
+
+# ── 宏观经济指标卡片 ──────────────────────────────────────────────────
+
+def macro_report_card(data: List[Dict]) -> OutgoingCard:
+    """宏观经济指标卡片"""
+    if not data:
+        return OutgoingCard(
+            title="📊 宏观经济指标",
+            content="暂无数据"
+        )
+
+    lines = []
+    for item in data:
+        value = item.get("value", 0)
+        unit = item.get("unit", "")
+        change = item.get("change", 0)
+        date = item.get("date", "")[:7]  # YYYY-MM
+
+        change_str = ""
+        if change != 0:
+            arrow = "▲" if change > 0 else "▼"
+            change_str = f"　{arrow}{abs(change):.3f}"
+
+        lines.append(f"**{item['name']}**　{value}{unit}{change_str}　`{date}`")
+
+    return OutgoingCard(
+        title=f"🌐 宏观经济指标 · {datetime.now().strftime('%m/%d')}",
+        content="\n".join(lines),
+        footer="数据来源: Alpha Vantage · 月度/季度更新"
     )
