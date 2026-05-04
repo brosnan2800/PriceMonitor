@@ -228,7 +228,6 @@ def menu_card() -> OutgoingCard:
             # 金融查询行
             CardButton("查行情 🔍", "go_quote", {}, style="primary"),
             CardButton("我的自选 ⭐", "go_watchlist", {}),
-            CardButton("删除自选 🗑", "go_remove_watchlist", {}),
             # 定制任务行
             CardButton("定制任务 ⏰", "go_tasks", {}, style="primary"),
             CardButton("新建定制 ➕", "go_newtask", {}),
