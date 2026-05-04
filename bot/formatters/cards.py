@@ -465,21 +465,15 @@ def announcement_card(symbol: str, name: str, announcements: List[Dict]) -> Outg
 
 
 def settings_card(cfg_vals: Dict) -> OutgoingCard:
-    """系统设置卡片：含推送时间表单，无需重启即可生效"""
-    alert_min = cfg_vals.get("alert_min", 5)
+    """系统设置卡片：早报/晚报推送时间，无需重启即可生效"""
     digest_h  = cfg_vals.get("digest_h", 15)
     digest_m  = cfg_vals.get("digest_m", 30)
     morning_h = cfg_vals.get("morning_h", 9)
     morning_m = cfg_vals.get("morning_m", 0)
 
-    content = (
-        f"**⏱ 价格预警检查频率**　每 **{alert_min}** 分钟\n\n"
-        "**⏰ 修改推送时间**\n"
-        "填写 24 小时制，格式 `HH:MM`，留空则不修改"
-    )
     return OutgoingCard(
-        title="⚙️ 系统设置",
-        content=content,
+        title="⚙️ 推送时间设置",
+        content="填写 24 小时制，格式 `HH:MM`，留空则不修改",
         form=CardForm(
             fields=[
                 CardFormField(
@@ -489,11 +483,11 @@ def settings_card(cfg_vals: Dict) -> OutgoingCard:
                 ),
                 CardFormField(
                     name="digest_time",
-                    label="📊 日报时间",
+                    label="🌙 晚报时间",
                     placeholder=f"当前 {digest_h:02d}:{digest_m:02d}，如 16:00",
                 ),
             ],
-            submit_label="💾 保存推送时间",
+            submit_label="💾 保存",
             submit_action="save_push_times",
         ),
         footer="仅修改您自己的推送时间，不影响其他用户"

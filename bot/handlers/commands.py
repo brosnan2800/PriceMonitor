@@ -709,7 +709,7 @@ class CommandHandler:
         label = "早报" if report_type == "morning" else "日报"
         module_names = {
             "a_stock": "A股指数", "us_stock": "美股三大", "hk_stock": "港股恒生",
-            "crypto": "BTC/ETH", "fx": "汇率", "commodity": "原油/黄金",
+            "fx": "汇率", "commodity": "原油/黄金", "us_news": "美股新闻情绪",
         }
         selected_labels = "、".join(module_names.get(m, m) for m in modules) or "（空）"
         self.adapter.send_success(
