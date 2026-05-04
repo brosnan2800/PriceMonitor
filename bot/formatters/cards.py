@@ -225,16 +225,10 @@ def menu_card() -> OutgoingCard:
         title="🤖 综合秘书 · 主菜单",
         content="请选择要操作的功能：",
         buttons=[
-            # 金融查询行
             CardButton("查行情 🔍", "go_quote", {}, style="primary"),
             CardButton("我的自选 ⭐", "go_watchlist", {}),
-            # 定制任务行
             CardButton("定制任务 ⏰", "go_tasks", {}, style="primary"),
             CardButton("新建定制 ➕", "go_newtask", {}),
-            # 早报/晚报内容
-            CardButton("📋 自定义早报", "go_morning_modules", {"report_type": "morning"}),
-            CardButton("⏰ 推送时间", "go_settings", {}),
-            # 查询行
             CardButton("🇺🇸 美国宏观", "go_macro", {}),
             CardButton("免打扰 🔕", "go_quiet", {}),
             CardButton("重启服务 🔄", "go_restart", {}),
@@ -399,17 +393,18 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
 
 
 def newtask_type_card() -> OutgoingCard:
-    """新建定制任务：仅保留价格预警"""
+    """新建定制任务：价格预警 + 早报内容 + 推送时间"""
     return OutgoingCard(
-        title="➕ 新建定制任务",
+        title="➕ 新建定制 / 配置推送",
         content=(
-            "目前支持的定制任务：\n\n"
             "**🔔 价格预警** — 价格/涨跌幅达到阈值时提醒\n\n"
-            "早报/晚报内容及时间请在「⚙️ 系统设置」中配置。"
+            "**📋 自定义早报** — 选择早报包含哪些指数/数据\n\n"
+            "**⏰ 推送时间** — 修改早报/晚报的推送时间"
         ),
         buttons=[
             CardButton("🔔 价格预警", "go_alert_input", {}, style="primary"),
-            CardButton("⚙️ 系统设置", "go_settings", {}),
+            CardButton("📋 自定义早报", "go_morning_modules", {"report_type": "morning"}),
+            CardButton("⏰ 推送时间", "go_settings", {}),
         ]
     )
 
