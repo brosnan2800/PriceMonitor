@@ -38,6 +38,31 @@ def _base_url() -> str:
     cfg = _get_config()
     return getattr(cfg, "ALPHA_VANTAGE_BASE_URL", "https://www.alphavantage.co/query")
 
+# ── 配额状态追踪 ──────────────────────────────────────────────────────
+
+_quota_exhausted: bool = False
+_quota_exhausted_at: Optional[datetime] = None
+_QUOTA_RESET_HOURS = 24  # AV 免费版每日重置
+
+
+def is_quota_exhausted() -> bool:
+    """检查当前配额是否耗尽（超过 24h 自动重置）"""
+    global _quota_exhausted, _quota_exhausted_at
+    if _quota_exhausted and _quota_exhausted_at:
+        if datetime.now() - _quota_exhausted_at > timedelta(hours=_QUOTA_RESET_HOURS):
+            _quota_exhausted = False
+            _quota_exhausted_at = None
+    return _quota_exhausted
+
+
+def _mark_quota_exhausted() -> None:
+    global _quota_exhausted, _quota_exhausted_at
+    if not _quota_exhausted:
+        _quota_exhausted = True
+        _quota_exhausted_at = datetime.now()
+        logger.warning("Alpha Vantage 配额已耗尽，将在次日自动重置")
+
+
 # ── 限速 ──────────────────────────────────────────────────────────────
 
 _rate_lock = Lock()
@@ -71,6 +96,7 @@ def _throttled_get(params: Dict) -> Optional[Dict]:
     if "Note" in data or "Information" in data:
         msg = data.get("Note") or data.get("Information", "")
         logger.warning(f"Alpha Vantage 配额/限制提示: {msg[:120]}")
+        _mark_quota_exhausted()
         return None
 
     return data

@@ -514,17 +514,23 @@ def _fetch_extra_modules(modules: set) -> Dict:
     if av_needed:
         try:
             from data.sources.alphavantage_source import (
-                get_fx_rates_batch, get_commodities_batch, is_configured,
+                get_fx_rates_batch, get_commodities_batch,
+                is_configured, is_quota_exhausted,
             )
             if is_configured():
-                if "fx" in modules:
-                    # get_fx_rates_batch returns List[Dict] with rate/name fields
-                    fx_list = get_fx_rates_batch() or []
-                    extra["fx"] = fx_list
-                if "commodity" in modules:
-                    # get_commodities_batch returns List[Dict] with name/price/unit fields
-                    comm_list = get_commodities_batch(["WTI", "BRENT", "NATURAL_GAS"]) or []
-                    extra["commodity"] = comm_list
+                if is_quota_exhausted():
+                    extra["av_quota_exhausted"] = True
+                else:
+                    if "fx" in modules:
+                        fx_list = get_fx_rates_batch() or []
+                        extra["fx"] = fx_list
+                        if is_quota_exhausted():
+                            extra["av_quota_exhausted"] = True
+                    if "commodity" in modules:
+                        comm_list = get_commodities_batch(["WTI", "BRENT", "NATURAL_GAS"]) or []
+                        extra["commodity"] = comm_list
+                        if is_quota_exhausted():
+                            extra["av_quota_exhausted"] = True
         except Exception as e:
             logger.warning(f"Alpha Vantage 模块拉取失败: {e}")
 

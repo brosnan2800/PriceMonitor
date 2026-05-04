@@ -200,6 +200,11 @@ def daily_digest_card(index_data: List[Dict], watchlist_data: List[Dict],
             unit = c.get("unit", "")
             lines.append(f"　{c['name']}　{c['price']}{'/'+unit if unit else ''}　{trend}")
 
+    # 配额提示
+    av_quota_note = ""
+    if extra_modules.get("av_quota_exhausted"):
+        av_quota_note = "  |  ⚠️ AV配额已耗尽，汇率/商品数据将于明日恢复"
+
     return OutgoingCard(
         title=f"📊 金融日报 · {datetime.now().strftime('%m/%d %H:%M')}",
         content="\n".join(lines) if lines else "暂无数据",
@@ -207,7 +212,7 @@ def daily_digest_card(index_data: List[Dict], watchlist_data: List[Dict],
             CardButton("⚙️ 自定义内容", "go_morning_modules", {"report_type": "daily"}),
             CardButton("⚙️ 管理推送", "go_tasks", {}),
         ],
-        footer="默认推送：工作日收盘后  |  /digest 切换推送模式"
+        footer=f"默认推送：工作日收盘后  |  /digest 切换推送模式{av_quota_note}"
     )
 
 
