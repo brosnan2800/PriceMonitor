@@ -97,6 +97,8 @@ class CommandHandler:
             self._cmd_mute(msg)
         elif text.startswith("/settings"):
             self._cmd_settings(msg)
+        elif text.startswith("/macro"):
+            self._cmd_macro(msg)
         elif text.startswith("/restart"):
             self._cmd_restart(msg)
         else:
@@ -367,6 +369,7 @@ class CommandHandler:
             "go_settings":          lambda: self._cmd_settings(msg),
             "go_quiet":             lambda: self._cmd_quiet(msg),
             "go_restart":           lambda: self._cmd_restart(msg),
+            "go_macro":             lambda: self._cmd_macro(msg),
             "add_watchlist":        lambda: self._add_from_callback(msg, data),
             "add_alert":            lambda: self._alert_from_callback(msg, data),
             "remove_watchlist":     lambda: self._remove_from_callback(msg, data),
@@ -572,19 +575,6 @@ class CommandHandler:
                 {"label": "🔔 每天 09:30 开盘时", "cron": "30 9 * * 1-5"},
                 {"label": "🌅 每天 08:00 开盘前", "cron": "0 8 * * 1-5"},
             ]))
-        elif task_type == "announcement":
-            self.adapter.send_card(msg.user_id, newtask_announcement_card())
-        elif task_type == "us_news":
-            self.adapter.send_card(msg.user_id, newtask_time_card("us_news", [
-                {"label": "📰 每天 09:00（A股开盘前）", "cron": "0 9 * * 1-5"},
-                {"label": "🌙 每天 22:00（美股收盘后）", "cron": "0 22 * * 1-5"},
-                {"label": "🔁 每天两次（09:00 + 22:00）", "cron": "0 9,22 * * 1-5"},
-            ]))
-        elif task_type == "macro_report":
-            self.adapter.send_card(msg.user_id, newtask_time_card("macro_report", [
-                {"label": "📅 每周一 09:00", "cron": "0 9 * * 1"},
-                {"label": "📅 每天 09:00（实时更新）", "cron": "0 9 * * 1-5"},
-            ]))
         else:
             self.adapter.send_text(msg.user_id, "未知任务类型")
 
@@ -607,7 +597,6 @@ class CommandHandler:
 
         type_names = {
             "daily_report": "每日行情报告", "index_report": "指数早报",
-            "us_news": "美股新闻情绪", "macro_report": "宏观指标月报",
         }
         type_name = type_names.get(task_type, task_type)
         self.adapter.send_success(
@@ -737,6 +726,28 @@ class CommandHandler:
             morning_time=morning_time or None,
             digest_time=digest_time or None,
         )
+
+    def _cmd_macro(self, msg: "IncomingMessage") -> None:
+        """手动查询美国宏观指标（CPI/失业率/联邦利率/国债）"""
+        from bot.formatters.cards import macro_query_card
+        try:
+            from data.sources.alphavantage_source import (
+                get_macro_summary, is_configured, is_quota_exhausted,
+            )
+            if not is_configured():
+                self.adapter.send_text(
+                    msg.user_id, "⚠️ Alpha Vantage key 未配置，无法查询宏观数据\n请在 config.py 中设置 AV_API_KEY"
+                )
+                return
+            if is_quota_exhausted():
+                self.adapter.send_text(msg.user_id, "⚠️ Alpha Vantage 配额已耗尽，请明日再试")
+                return
+            data = get_macro_summary() or []
+            card = macro_query_card(data)
+            self.adapter.send_card(msg.user_id, card)
+        except Exception as e:
+            logger.error(f"宏观查询失败: {e}")
+            self.adapter.send_text(msg.user_id, f"❌ 查询失败：{e}")
 
     def _cmd_restart(self, msg: "IncomingMessage") -> None:
         """通过飞书触发后台重启（先回复再重启，确保消息发出）"""

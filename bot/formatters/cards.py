@@ -233,7 +233,8 @@ def menu_card() -> OutgoingCard:
             CardButton("定制任务 ⏰", "go_tasks", {}, style="primary"),
             CardButton("新建定制 ➕", "go_newtask", {}),
             CardButton("系统设置 ⚙️", "go_settings", {}),
-            # 控制行
+            # 查询行
+            CardButton("🇺🇸 美国宏观", "go_macro", {}),
             CardButton("免打扰 🔕", "go_quiet", {}),
             CardButton("重启服务 🔄", "go_restart", {}),
         ],
@@ -397,21 +398,17 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
 
 
 def newtask_type_card() -> OutgoingCard:
-    """新建定制任务：选择类型"""
+    """新建定制任务：仅保留价格预警"""
     return OutgoingCard(
         title="➕ 新建定制任务",
         content=(
-            "请选择任务类型：\n\n"
-            "**📢 股票公告监控** — 指定股票有新公告时提醒\n"
-            "**🔔 价格预警** — 价格/涨跌幅达到阈值时提醒\n"
-            "**📰 美股新闻情绪** — 按自选股过滤，每日情绪分析推送\n"
-            "**🌐 宏观指标月报** — CPI/利率/GDP 等宏观数据推送"
+            "目前支持的定制任务：\n\n"
+            "**🔔 价格预警** — 价格/涨跌幅达到阈值时提醒\n\n"
+            "早报/晚报内容及时间请在「⚙️ 系统设置」中配置。"
         ),
         buttons=[
-            CardButton("📢 股票公告监控", "newtask_type", {"type": "announcement"}, style="primary"),
-            CardButton("🔔 价格预警", "go_alert_input", {}),
-            CardButton("📰 美股新闻情绪", "newtask_type", {"type": "us_news"}),
-            CardButton("🌐 宏观指标月报", "newtask_type", {"type": "macro_report"}),
+            CardButton("🔔 价格预警", "go_alert_input", {}, style="primary"),
+            CardButton("⚙️ 系统设置", "go_settings", {}),
         ]
     )
 
@@ -506,21 +503,26 @@ def settings_card(cfg_vals: Dict) -> OutgoingCard:
 # ── 早报/日报内容模块选择 ─────────────────────────────────────────────
 
 # 所有可选模块定义
-_ALL_MODULES = [
-    ("a_stock",   "🇨🇳 A股指数",    "腾讯财经",      True),   # (id, label, source, needs_av)
-    ("us_stock",  "🇺🇸 美股三大",   "腾讯财经",      False),
-    ("hk_stock",  "🌏 港股恒生",    "腾讯财经",      False),
-    ("crypto",    "₿ BTC/ETH",     "Binance",       False),
-    ("fx",        "💵 汇率",        "Alpha Vantage", True),
-    ("commodity", "🛢️ 原油/黄金",  "Alpha Vantage", True),
+# 早报模块定义：(id, label, source, needs_av)
+# 分两组：腾讯（无限制）和 Alpha Vantage（25次/天）
+_TENCENT_MODULES = [
+    ("a_stock",   "🇨🇳 A股指数",     "腾讯财经", False),
+    ("hk_stock",  "🌏 港股恒生",     "腾讯财经", False),
+    ("us_stock",  "🇺🇸 美股三大",    "腾讯财经", False),
 ]
+_AV_MODULES = [
+    ("fx",        "💵 汇率",          "Alpha Vantage", True),
+    ("commodity", "🛢️ 原油/黄金",    "Alpha Vantage", True),
+    ("us_news",   "📰 美股新闻情绪", "Alpha Vantage", True),
+]
+_ALL_MODULES = _TENCENT_MODULES + _AV_MODULES
 
 DEFAULT_MORNING_MODULES = {"a_stock", "us_stock"}
 DEFAULT_DAILY_MODULES   = {"a_stock", "us_stock"}
 
 def morning_modules_card(report_type: str, selected: List[str]) -> OutgoingCard:
     """
-    早报/日报内容模块选择卡片
+    早报内容模块选择卡片（分腾讯/AV两组）
     report_type: "morning" | "daily"
     selected: 已选模块 id 列表（当前用户设置）
     """
@@ -528,21 +530,33 @@ def morning_modules_card(report_type: str, selected: List[str]) -> OutgoingCard:
     title = title_map.get(report_type, "⚙️ 自定义推送内容")
 
     selected_set = set(selected)
-    lines = ["点击模块切换 **开启/关闭**，再点「保存」：\n"]
-
-    av_modules = [m[0] for m in _ALL_MODULES if m[3]]  # 需要 AV key 的模块
-    _ = av_modules  # used below for note
-
     buttons = []
-    for mod_id, label, source, needs_av in _ALL_MODULES:
+
+    lines = [
+        "点击模块切换 **开启/关闭**，再点「保存」：\n",
+        "**── 腾讯财经（无次数限制）──**",
+    ]
+    for mod_id, label, source, _ in _TENCENT_MODULES:
         is_on = mod_id in selected_set
         mark = "✅" if is_on else "⬜"
-        note = "（需AV Key）" if needs_av else ""
-        lines.append(f"{mark} **{label}** · {source}{note}")
-        btn_label = f"{'关闭' if is_on else '开启'} {label}"
+        lines.append(f"　{mark} {label}")
+        btn_label = f"{'关' if is_on else '开'} {label}"
         buttons.append(CardButton(
-            btn_label,
-            "toggle_morning_module",
+            btn_label, "toggle_morning_module",
+            {"report_type": report_type, "module": mod_id,
+             "current": ",".join(sorted(selected_set))},
+        ))
+
+    lines.append("\n**── Alpha Vantage（⚠️ 共25次/天，缓存1小时）──**")
+    av_costs = {"fx": "4次", "commodity": "3次", "us_news": "1次"}
+    for mod_id, label, source, _ in _AV_MODULES:
+        is_on = mod_id in selected_set
+        mark = "✅" if is_on else "⬜"
+        cost = av_costs.get(mod_id, "")
+        lines.append(f"　{mark} {label}　`{cost}`")
+        btn_label = f"{'关' if is_on else '开'} {label}"
+        buttons.append(CardButton(
+            btn_label, "toggle_morning_module",
             {"report_type": report_type, "module": mod_id,
              "current": ",".join(sorted(selected_set))},
         ))
@@ -557,7 +571,7 @@ def morning_modules_card(report_type: str, selected: List[str]) -> OutgoingCard:
         title=title,
         content="\n".join(lines),
         buttons=buttons,
-        footer="Alpha Vantage 模块消耗每日配额（免费版25次/天）"
+        footer="AV 免费版 25次/天；每次推送按已选模块实际调用，缓存命中不重复消耗"
     )
 
 
@@ -617,5 +631,40 @@ def macro_report_card(data: List[Dict]) -> OutgoingCard:
     return OutgoingCard(
         title=f"🌐 宏观经济指标 · {datetime.now().strftime('%m/%d')}",
         content="\n".join(lines),
-        footer="数据来源: Alpha Vantage · 月度/季度更新"
+        footer="数据来源: Alpha Vantage · 月度/季度更新（消耗4次配额，当日内缓存）"
+    )
+
+
+def macro_query_card(data: List[Dict]) -> OutgoingCard:
+    """美国宏观指标按需查询卡片（手动触发）"""
+    if not data:
+        return OutgoingCard(
+            title="🇺🇸 美国宏观指标",
+            content="⚠️ 暂无数据，可能是 Alpha Vantage 未配置或配额已耗尽",
+            footer="Alpha Vantage 免费版 25次/天"
+        )
+
+    lines = []
+    indicator_desc = {
+        "FEDERAL_FUNDS_RATE": "联邦基金利率",
+        "CPI":                "CPI（消费者物价）",
+        "UNEMPLOYMENT":       "失业率",
+        "TREASURY_YIELD":     "10年期国债收益率",
+    }
+    for item in data:
+        name = indicator_desc.get(item.get("indicator", ""), item.get("name", ""))
+        value = item.get("value", 0)
+        unit = item.get("unit", "")
+        change = item.get("change", 0)
+        date = item.get("date", "")[:7]
+        change_str = ""
+        if change != 0:
+            arrow = "▲" if change > 0 else "▼"
+            change_str = f"　{arrow}{abs(change):.3f}"
+        lines.append(f"**{name}**　{value}{unit}{change_str}　`{date}`")
+
+    return OutgoingCard(
+        title=f"🇺🇸 美国宏观指标 · {datetime.now().strftime('%m/%d')}",
+        content="\n".join(lines),
+        footer="数据来源: Alpha Vantage · 每次查询消耗4次配额，当日内缓存"
     )

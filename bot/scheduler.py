@@ -163,11 +163,8 @@ class TaskScheduler:
 
         handler_map = {
             "daily_report":  self._make_daily_report_job,
-            "announcement":  self._make_announcement_job,
             "price_alert":   self._make_price_alert_job,
             "index_report":  self._make_index_report_job,
-            "us_news":       self._make_us_news_job,
-            "macro_report":  self._make_macro_report_job,
         }
 
         make_fn = handler_map.get(task_type)
@@ -274,52 +271,6 @@ class TaskScheduler:
             db.update_task_last_run(task["id"])
         return job
 
-    def _make_us_news_job(self, task: Dict) -> Callable:
-        def job():
-            user_id = task["user_id"]
-            platform = self._get_user_platform(user_id)
-            adapter = self.adapters.get(platform)
-            if not adapter:
-                return
-            try:
-                from data.sources.alphavantage_source import (
-                    get_news_sentiment, is_configured,
-                )
-                if not is_configured():
-                    adapter.send_text(user_id, "⚠️ Alpha Vantage key 未配置，无法获取新闻情绪")
-                    return
-                cfg = json.loads(task.get("config") or "{}")
-                tickers = cfg.get("tickers", [])
-                items = get_news_sentiment(tickers) or []
-                card = news_sentiment_card(items, tickers)
-                adapter.send_card(user_id, card)
-                db.update_task_last_run(task["id"])
-            except Exception as e:
-                logger.error(f"美股新闻任务失败 task#{task['id']}: {e}")
-        return job
-
-    def _make_macro_report_job(self, task: Dict) -> Callable:
-        def job():
-            user_id = task["user_id"]
-            platform = self._get_user_platform(user_id)
-            adapter = self.adapters.get(platform)
-            if not adapter:
-                return
-            try:
-                from data.sources.alphavantage_source import (
-                    get_macro_summary, is_configured,
-                )
-                if not is_configured():
-                    adapter.send_text(user_id, "⚠️ Alpha Vantage key 未配置，无法获取宏观数据")
-                    return
-                data = get_macro_summary() or []
-                card = macro_report_card(data)
-                adapter.send_card(user_id, card)
-                db.update_task_last_run(task["id"])
-            except Exception as e:
-                logger.error(f"宏观指标任务失败 task#{task['id']}: {e}")
-        return job
-
     # ── 内置任务实现 ──────────────────────────────────────────────────
 
     def _job_daily_digest_all(self) -> None:
@@ -373,12 +324,9 @@ class TaskScheduler:
         if settings.get("quiet_mode"):
             return
 
-        modules = set(settings.get("daily_modules", list(DEFAULT_DAILY_MODULES)))
-
-        # 指数数据（所有模块基础）
+        # 晚报固定内容：关注指数 + 自选收盘价，不调 AV（省配额给早报用）
         index_data = get_index_quotes()
 
-        # 自选股
         watchlist_items = db.get_watchlist(user_id)
         watchlist_quotes = []
         for item in watchlist_items:
@@ -386,16 +334,7 @@ class TaskScheduler:
             if q:
                 watchlist_quotes.append(q)
 
-        # 公告：仅推送有自选的用户
-        announcements = []
-        for item in watchlist_items[:3]:
-            anns = get_stock_announcements(item["symbol"], limit=2, important_only=True)
-            announcements.extend(anns)
-
-        # 动态模块
-        extra_modules = _fetch_extra_modules(modules)
-
-        card = daily_digest_card(index_data, watchlist_quotes, announcements, [], extra_modules)
+        card = daily_digest_card(index_data, watchlist_quotes, [], [])
         content_hash = hashlib.md5(
             f"{user_id}{datetime.now().strftime('%Y%m%d%H')}".encode()
         ).hexdigest()
@@ -510,11 +449,11 @@ def _fetch_extra_modules(modules: set) -> Dict:
         except Exception as e:
             logger.warning(f"crypto 模块拉取失败: {e}")
 
-    av_needed = modules & {"fx", "commodity"}
+    av_needed = modules & {"fx", "commodity", "us_news"}
     if av_needed:
         try:
             from data.sources.alphavantage_source import (
-                get_fx_rates_batch, get_commodities_batch,
+                get_fx_rates_batch, get_commodities_batch, get_news_sentiment,
                 is_configured, is_quota_exhausted,
             )
             if is_configured():
@@ -526,9 +465,16 @@ def _fetch_extra_modules(modules: set) -> Dict:
                         extra["fx"] = fx_list
                         if is_quota_exhausted():
                             extra["av_quota_exhausted"] = True
-                    if "commodity" in modules:
+                    if "commodity" in modules and not extra.get("av_quota_exhausted"):
                         comm_list = get_commodities_batch(["WTI", "BRENT", "NATURAL_GAS"]) or []
                         extra["commodity"] = comm_list
+                        if is_quota_exhausted():
+                            extra["av_quota_exhausted"] = True
+                    if "us_news" in modules and not extra.get("av_quota_exhausted"):
+                        # tickers 从用户自选股动态取（_fetch_extra_modules 为全局函数，无 user_id）
+                        # 传空表示查全市场情绪
+                        news_list = get_news_sentiment(tickers=[]) or []
+                        extra["us_news"] = news_list
                         if is_quota_exhausted():
                             extra["av_quota_exhausted"] = True
         except Exception as e:
