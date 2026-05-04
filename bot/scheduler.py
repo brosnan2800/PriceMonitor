@@ -437,8 +437,13 @@ def _fetch_extra_modules(modules: set) -> Dict:
 
     if "crypto" in modules:
         try:
-            from data.sources.akshare_source import get_crypto_prices
-            extra["crypto"] = get_crypto_prices(["BTC", "ETH"])
+            from data.sources.akshare_source import get_crypto_quote
+            crypto_list = []
+            for symbol in ["BTC", "ETH"]:
+                q = get_crypto_quote(symbol)
+                if q:
+                    crypto_list.append(q)
+            extra["crypto"] = crypto_list
         except Exception as e:
             logger.warning(f"crypto 模块拉取失败: {e}")
 
@@ -450,21 +455,12 @@ def _fetch_extra_modules(modules: set) -> Dict:
             )
             if is_configured():
                 if "fx" in modules:
-                    fx_raw = get_fx_rates_batch([("USD", "CNY"), ("EUR", "CNY"), ("USD", "JPY")])
-                    fx_list = []
-                    for pair, rate in (fx_raw or {}).items():
-                        fx_list.append({"name": pair, "rate": rate})
+                    # get_fx_rates_batch returns List[Dict] with rate/name fields
+                    fx_list = get_fx_rates_batch() or []
                     extra["fx"] = fx_list
                 if "commodity" in modules:
-                    comm_raw = get_commodities_batch(["WTI", "BRENT", "NATURAL_GAS"])
-                    comm_list = []
-                    for name, price in (comm_raw or {}).items():
-                        unit_map = {"WTI": "桶", "BRENT": "桶", "NATURAL_GAS": "MMBtu"}
-                        comm_list.append({
-                            "name": name,
-                            "price": price,
-                            "unit": unit_map.get(name, ""),
-                        })
+                    # get_commodities_batch returns List[Dict] with name/price/unit fields
+                    comm_list = get_commodities_batch(["WTI", "BRENT", "NATURAL_GAS"]) or []
                     extra["commodity"] = comm_list
         except Exception as e:
             logger.warning(f"Alpha Vantage 模块拉取失败: {e}")
