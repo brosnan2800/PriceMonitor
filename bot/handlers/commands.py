@@ -777,10 +777,10 @@ class CommandHandler:
 
     def _cmd_settings(self, msg: "IncomingMessage") -> None:
         """查看或修改系统配置"""
-        parts = msg.text.split(maxsplit=2)
+        parts = (msg.text or "").split(maxsplit=2)
 
-        # /settings — 显示当前配置卡片（含时间表单）
-        if len(parts) == 1:
+        # /settings（无参数）或按钮回调 — 显示推送时间配置卡片
+        if len(parts) <= 1:
             try:
                 import config as cfg
             except ImportError:

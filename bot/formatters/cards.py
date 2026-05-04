@@ -520,6 +520,16 @@ def morning_modules_card(report_type: str, selected: List[str]) -> OutgoingCard:
     title = title_map.get(report_type, "⚙️ 自定义推送内容")
 
     selected_set = set(selected)
+    # 每个模块的详细说明
+    _MODULE_DESC = {
+        "a_stock":   "上证/深证/创业板指数 + 涨跌幅",
+        "hk_stock":  "恒生指数 + 国企指数 + 涨跌幅",
+        "us_stock":  "道琼斯/纳斯达克/标普500 + 涨跌幅",
+        "fx":        "USD/CNY · EUR/USD · USD/JPY 等4组汇率",
+        "commodity": "WTI原油 · 布伦特原油 · 天然气，共3条",
+        "us_news":   "自选股相关新闻情绪（看多/看空/中性），共1次",
+    }
+
     buttons = []
 
     lines = [
@@ -529,7 +539,8 @@ def morning_modules_card(report_type: str, selected: List[str]) -> OutgoingCard:
     for mod_id, label, source, _ in _TENCENT_MODULES:
         is_on = mod_id in selected_set
         mark = "✅" if is_on else "⬜"
-        lines.append(f"　{mark} {label}")
+        desc = _MODULE_DESC.get(mod_id, "")
+        lines.append(f"　{mark} **{label}** — {desc}")
         btn_label = f"{'关' if is_on else '开'} {label}"
         buttons.append(CardButton(
             btn_label, "toggle_morning_module",
@@ -538,12 +549,13 @@ def morning_modules_card(report_type: str, selected: List[str]) -> OutgoingCard:
         ))
 
     lines.append("\n**── Alpha Vantage（⚠️ 共25次/天，缓存1小时）──**")
-    av_costs = {"fx": "4次", "commodity": "3次", "us_news": "1次"}
+    av_costs = {"fx": "消耗4次", "commodity": "消耗3次", "us_news": "消耗1次"}
     for mod_id, label, source, _ in _AV_MODULES:
         is_on = mod_id in selected_set
         mark = "✅" if is_on else "⬜"
         cost = av_costs.get(mod_id, "")
-        lines.append(f"　{mark} {label}　`{cost}`")
+        desc = _MODULE_DESC.get(mod_id, "")
+        lines.append(f"　{mark} **{label}** `{cost}` — {desc}")
         btn_label = f"{'关' if is_on else '开'} {label}"
         buttons.append(CardButton(
             btn_label, "toggle_morning_module",
