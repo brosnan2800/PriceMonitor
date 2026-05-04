@@ -729,6 +729,7 @@ class CommandHandler:
 
     def _cmd_macro(self, msg: "IncomingMessage") -> None:
         """手动查询美国宏观指标（CPI/失业率/联邦利率/国债）"""
+        import threading
         from bot.formatters.cards import macro_query_card
         try:
             from data.sources.alphavantage_source import (
@@ -742,12 +743,23 @@ class CommandHandler:
             if is_quota_exhausted():
                 self.adapter.send_text(msg.user_id, "⚠️ Alpha Vantage 配额已耗尽，请明日再试")
                 return
-            data = get_macro_summary() or []
-            card = macro_query_card(data)
-            self.adapter.send_card(msg.user_id, card)
         except Exception as e:
-            logger.error(f"宏观查询失败: {e}")
-            self.adapter.send_text(msg.user_id, f"❌ 查询失败：{e}")
+            self.adapter.send_text(msg.user_id, f"❌ 初始化失败：{e}")
+            return
+
+        # 先回复「查询中」，再异步拉数据（AV 限速 12s/次，4项串行最长约46s）
+        self.adapter.send_text(msg.user_id, "🔄 正在查询美国宏观指标，约需 15-50 秒，请稍候...")
+
+        def _fetch():
+            try:
+                data = get_macro_summary() or []
+                card = macro_query_card(data)
+                self.adapter.send_card(msg.user_id, card)
+            except Exception as e:
+                logger.error(f"宏观查询失败: {e}")
+                self.adapter.send_text(msg.user_id, f"❌ 查询失败：{e}")
+
+        threading.Thread(target=_fetch, daemon=True).start()
 
     def _cmd_restart(self, msg: "IncomingMessage") -> None:
         """通过飞书触发后台重启（先回复再重启，确保消息发出）"""
