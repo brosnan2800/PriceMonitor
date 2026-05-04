@@ -348,6 +348,7 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
     )
 
     # ── 自定义推送任务区 ──────────────────────────────
+    task_buttons = []
     if tasks:
         lines = ["\n**📋 我的推送任务**\n"]
         for t in tasks:
@@ -355,6 +356,13 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
             type_name = task_type_names.get(t.get("task_type", ""), t.get("task_type", ""))
             cron = t.get("cron_expr", "")
             lines.append(f"{status} #{t['id']} {type_name}　`{cron}`")
+            toggle_label = "⏸ 暂停" if t.get("enabled") else "▶ 恢复"
+            task_buttons.append(
+                CardButton(f"{toggle_label} #{t['id']}", "toggle_task_btn", {"task_id": t["id"]})
+            )
+            task_buttons.append(
+                CardButton(f"🗑 删除 #{t['id']}", "del_task_btn", {"task_id": t["id"]}, style="danger")
+            )
         sections.append("\n".join(lines))
     else:
         sections.append("\n**📋 我的推送任务**\n暂无自定义推送任务")
@@ -375,6 +383,7 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
         content="\n".join(sections),
         buttons=[
             CardButton("新建定制 ➕", "go_newtask", {}, style="primary"),
+            *task_buttons,
         ]
     )
 

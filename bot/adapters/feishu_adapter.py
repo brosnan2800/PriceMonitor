@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 _SEND_URL = "https://open.feishu.cn/open-apis/im/v1/messages"
 _AUTH_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+_PATCH_URL = "https://open.feishu.cn/open-apis/im/v1/messages/{message_id}"
 
 
 class FeishuAdapter(BaseAdapter):
@@ -76,10 +77,11 @@ class FeishuAdapter(BaseAdapter):
     # ── 发送消息 ──────────────────────────────────────────────────────
 
     def _send(self, receive_id: str, receive_id_type: str,
-              msg_type: str, content: Dict) -> bool:
+              msg_type: str, content: Dict) -> Optional[str]:
+        """发送消息，返回 message_id（失败返回 None）"""
         token = self._get_token()
         if not token:
-            return False
+            return None
         try:
             resp = requests.post(
                 _SEND_URL,
@@ -95,18 +97,42 @@ class FeishuAdapter(BaseAdapter):
             )
             result = resp.json()
             if result.get("code") == 0:
-                return True
+                return result.get("data", {}).get("message_id")
             logger.error(f"飞书发送失败: {result}")
         except Exception as e:
             logger.error(f"飞书发送异常: {e}")
-        return False
+        return None
 
     def send_text(self, user_id: str, text: str) -> bool:
-        return self._send(user_id, "open_id", "text", {"text": text})
+        return self._send(user_id, "open_id", "text", {"text": text}) is not None
 
-    def send_card(self, user_id: str, card: OutgoingCard) -> bool:
+    def send_card(self, user_id: str, card: OutgoingCard) -> Optional[str]:
+        """发送卡片消息，返回 message_id（失败返回 None）"""
         card_json = _build_feishu_card(card)
         return self._send(user_id, "open_id", "interactive", card_json)
+
+    def update_card(self, message_id: str, card: OutgoingCard) -> bool:
+        """原地 PATCH 刷新已发送的卡片内容"""
+        token = self._get_token()
+        if not token:
+            return False
+        try:
+            card_json = _build_feishu_card(card)
+            url = _PATCH_URL.format(message_id=message_id)
+            resp = requests.patch(
+                url,
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json; charset=utf-8"},
+                json={"content": json.dumps(card_json, ensure_ascii=False)},
+                timeout=10
+            )
+            result = resp.json()
+            if result.get("code") == 0:
+                return True
+            logger.error(f"飞书更新卡片失败: {result}")
+        except Exception as e:
+            logger.error(f"飞书更新卡片异常: {e}")
+        return False
 
     # ── WebSocket 长连接（接收消息） ──────────────────────────────────
 
@@ -245,7 +271,8 @@ class FeishuAdapter(BaseAdapter):
                 text="",
                 message_id="",
                 raw={},
-                callback_data=callback_data
+                callback_data=callback_data,
+                card_message_id=getattr(ev, "open_message_id", None) or "",
             )
             self._on_message(inc)
         except Exception as e:

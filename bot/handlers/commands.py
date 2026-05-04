@@ -253,6 +253,17 @@ class CommandHandler:
         alerts = db.get_alerts(msg.user_id)
         self.adapter.send_card(msg.user_id, tasks_card(tasks, alerts))
 
+    def _refresh_tasks_card(self, msg: "IncomingMessage") -> None:
+        """重新构建任务卡片，优先原地刷新"""
+        tasks = db.get_tasks(msg.user_id)
+        alerts = db.get_alerts(msg.user_id)
+        card = tasks_card(tasks, alerts)
+        if msg.card_message_id:
+            if not self.adapter.update_card(msg.card_message_id, card):
+                self.adapter.send_card(msg.user_id, card)
+        else:
+            self.adapter.send_card(msg.user_id, card)
+
     def _cmd_newtask(self, msg: "IncomingMessage") -> None:
         self.adapter.send_card(msg.user_id, newtask_type_card())
 
@@ -368,6 +379,8 @@ class CommandHandler:
             "toggle_morning_module": lambda: self._toggle_morning_module(msg, data),
             "save_morning_modules": lambda: self._save_morning_modules(msg, data),
             "save_push_times":      lambda: self._save_push_times_callback(msg, data),
+            "toggle_task_btn":      lambda: self._toggle_task_btn(msg, data),
+            "del_task_btn":         lambda: self._del_task_btn(msg, data),
         }
 
         handler = routing.get(action)
@@ -636,6 +649,30 @@ class CommandHandler:
             f"发送 `/tasks` 查看所有任务"
         )
 
+    # ── 任务卡片内联操作（暂停/删除）────────────────────────────────
+
+    def _toggle_task_btn(self, msg: "IncomingMessage", data: Dict) -> None:
+        """卡片按钮暂停/恢复任务，原地刷新"""
+        task_id = int(data.get("task_id", 0))
+        if not task_id:
+            return
+        tasks = db.get_tasks(msg.user_id)
+        task = next((t for t in tasks if t["id"] == task_id), None)
+        if not task:
+            self.adapter.send_error(msg.user_id, f"未找到任务 #{task_id}")
+            return
+        new_state = not bool(task["enabled"])
+        db.toggle_task(task_id, new_state)
+        self._refresh_tasks_card(msg)
+
+    def _del_task_btn(self, msg: "IncomingMessage", data: Dict) -> None:
+        """卡片按钮删除任务，原地刷新"""
+        task_id = int(data.get("task_id", 0))
+        if not task_id:
+            return
+        db.delete_task(task_id)
+        self._refresh_tasks_card(msg)
+
     # ── 早报/日报内容模块定制 ─────────────────────────────────────────
 
     def _go_morning_modules(self, msg: "IncomingMessage", data: Dict) -> None:
@@ -649,7 +686,7 @@ class CommandHandler:
         self.adapter.send_card(msg.user_id, card)
 
     def _toggle_morning_module(self, msg: "IncomingMessage", data: Dict) -> None:
-        """切换一个模块的开启/关闭状态，刷新选择卡片"""
+        """切换一个模块的开启/关闭状态，原地刷新选择卡片"""
         report_type = data.get("report_type", "morning")
         module = data.get("module", "")
         current_str = data.get("current", "")
@@ -662,7 +699,12 @@ class CommandHandler:
             current.add(module)
 
         card = morning_modules_card(report_type, list(current))
-        self.adapter.send_card(msg.user_id, card)
+        # 优先原地刷新，失败时发新消息
+        if msg.card_message_id:
+            if not self.adapter.update_card(msg.card_message_id, card):
+                self.adapter.send_card(msg.user_id, card)
+        else:
+            self.adapter.send_card(msg.user_id, card)
 
     def _save_morning_modules(self, msg: "IncomingMessage", data: Dict) -> None:
         """保存模块选择到 users.settings"""

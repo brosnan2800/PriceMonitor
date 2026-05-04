@@ -21,6 +21,7 @@ class IncomingMessage:
     message_id: str         # 平台原始消息 ID
     raw: Dict               # 原始 payload（调试用）
     callback_data: Optional[str] = None   # 按钮回调数据（非按钮消息为 None）
+    card_message_id: Optional[str] = None # 触发回调的卡片消息 ID（用于原地刷新）
 
 
 @dataclass
@@ -84,8 +85,12 @@ class BaseAdapter(ABC):
         """发送纯文本消息"""
 
     @abstractmethod
-    def send_card(self, user_id: str, card: OutgoingCard) -> bool:
-        """发送富交互卡片消息（飞书 MessageCard / Telegram InlineKeyboard）"""
+    def send_card(self, user_id: str, card: OutgoingCard) -> Optional[str]:
+        """发送富交互卡片消息，返回 message_id（失败返回 None）"""
+
+    def update_card(self, message_id: str, card: OutgoingCard) -> bool:
+        """原地刷新已发送的卡片（子类按需覆盖，默认不支持）"""
+        return False
 
     @abstractmethod
     def start(self, on_message) -> None:
