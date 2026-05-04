@@ -115,7 +115,10 @@ def watchlist_card(items: List[Dict], quote_map: Dict[str, Dict]) -> OutgoingCar
         q = quote_map.get(sym)
         if q:
             trend = _trend(q.get("change_pct", 0))
-            lines.append(f"**{q.get('name', sym)}** `{sym}`　{q['price']}　{trend}")
+            high = q.get("high", 0)
+            low  = q.get("low", 0)
+            hl = f"　↑{high} ↓{low}" if high and low else ""
+            lines.append(f"**{q.get('name', sym)}** `{sym}`　{q['price']}　{trend}{hl}")
         else:
             lines.append(f"**{item.get('name', sym)}** `{sym}`　数据获取中...")
 
