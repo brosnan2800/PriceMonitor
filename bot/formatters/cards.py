@@ -231,7 +231,9 @@ def menu_card() -> OutgoingCard:
             # 定制任务行
             CardButton("定制任务 ⏰", "go_tasks", {}, style="primary"),
             CardButton("新建定制 ➕", "go_newtask", {}),
-            CardButton("系统设置 ⚙️", "go_settings", {}),
+            # 早报/晚报内容
+            CardButton("📋 自定义早报", "go_morning_modules", {"report_type": "morning"}),
+            CardButton("⏰ 推送时间", "go_settings", {}),
             # 查询行
             CardButton("🇺🇸 美国宏观", "go_macro", {}),
             CardButton("免打扰 🔕", "go_quiet", {}),
