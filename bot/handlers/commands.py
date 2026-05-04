@@ -367,6 +367,7 @@ class CommandHandler:
             "go_morning_modules":   lambda: self._go_morning_modules(msg, data),
             "toggle_morning_module": lambda: self._toggle_morning_module(msg, data),
             "save_morning_modules": lambda: self._save_morning_modules(msg, data),
+            "save_push_times":      lambda: self._save_push_times_callback(msg, data),
         }
 
         handler = routing.get(action)
@@ -685,6 +686,16 @@ class CommandHandler:
             f"✅ {label}内容已更新！\n\n**已选模块：** {selected_labels}\n\n下次推送将按新设置发送。"
         )
 
+    def _save_push_times_callback(self, msg: "IncomingMessage", data: Dict) -> None:
+        """从 settings 卡片表单保存推送时间"""
+        morning_time = (data.get("morning_time") or "").strip()
+        digest_time  = (data.get("digest_time") or "").strip()
+        _save_user_push_time(
+            self.adapter, msg.user_id,
+            morning_time=morning_time or None,
+            digest_time=digest_time or None,
+        )
+
     def _cmd_restart(self, msg: "IncomingMessage") -> None:
         """通过飞书触发后台重启（先回复再重启，确保消息发出）"""
         import subprocess
@@ -715,18 +726,36 @@ class CommandHandler:
         """查看或修改系统配置"""
         parts = msg.text.split(maxsplit=2)
 
-        # /settings — 显示当前配置
+        # /settings — 显示当前配置卡片（含时间表单）
         if len(parts) == 1:
             try:
                 import config as cfg
             except ImportError:
                 cfg = None
+            user_settings = db.get_user_settings(msg.user_id)
+            # 用户设置优先，其次 config.py 默认值
+            def _parse_hm(time_str, default_h, default_m):
+                try:
+                    h, m = map(int, time_str.split(":"))
+                    return h, m
+                except Exception:
+                    return default_h, default_m
+            morning_h, morning_m = _parse_hm(
+                user_settings.get("morning_time", ""),
+                getattr(cfg, "MORNING_REPORT_HOUR", 9),
+                getattr(cfg, "MORNING_REPORT_MINUTE", 0),
+            )
+            digest_h, digest_m = _parse_hm(
+                user_settings.get("digest_time", ""),
+                getattr(cfg, "DAILY_DIGEST_HOUR", 15),
+                getattr(cfg, "DAILY_DIGEST_MINUTE", 30),
+            )
             vals = {
                 "alert_min": getattr(cfg, "PRICE_ALERT_INTERVAL_MINUTES", 5),
-                "digest_h":  getattr(cfg, "DAILY_DIGEST_HOUR", 15),
-                "digest_m":  getattr(cfg, "DAILY_DIGEST_MINUTE", 30),
-                "morning_h": getattr(cfg, "MORNING_REPORT_HOUR", 9),
-                "morning_m": getattr(cfg, "MORNING_REPORT_MINUTE", 0),
+                "digest_h":  digest_h,
+                "digest_m":  digest_m,
+                "morning_h": morning_h,
+                "morning_m": morning_m,
             }
             self.adapter.send_card(msg.user_id, settings_card(vals))
             return
@@ -748,15 +777,11 @@ class CommandHandler:
 
             elif key == "digest_time":
                 h, m = map(int, val.split(":"))
-                _update_config_value(cfg_path, "DAILY_DIGEST_HOUR", h)
-                _update_config_value(cfg_path, "DAILY_DIGEST_MINUTE", m)
-                self.adapter.send_text(msg.user_id, f"✅ 收盘日报时间已设为 {h}:{m:02d}\n重启后生效：`bash restart.sh`")
+                _save_user_push_time(self.adapter, msg.user_id, digest_time=f"{h:02d}:{m:02d}")
 
             elif key == "morning_time":
                 h, m = map(int, val.split(":"))
-                _update_config_value(cfg_path, "MORNING_REPORT_HOUR", h)
-                _update_config_value(cfg_path, "MORNING_REPORT_MINUTE", m)
-                self.adapter.send_text(msg.user_id, f"✅ 早报时间已设为 {h}:{m:02d}\n重启后生效：`bash restart.sh`")
+                _save_user_push_time(self.adapter, msg.user_id, morning_time=f"{h:02d}:{m:02d}")
 
             else:
                 self.adapter.send_text(
@@ -789,3 +814,54 @@ def _update_config_value(cfg_path: str, key: str, value) -> None:
         new_content = content.rstrip() + f"\n{key} = {repr(value)}\n"
     with open(cfg_path, "w", encoding="utf-8") as f:
         f.write(new_content)
+
+
+def _save_user_push_time(adapter, user_id: str,
+                         morning_time: Optional[str] = None,
+                         digest_time: Optional[str] = None) -> None:
+    """
+    验证并保存用户推送时间到 users.settings，
+    同时通知调度器动态 reschedule。
+    morning_time / digest_time: "HH:MM" 格式，None 表示不修改。
+    """
+    import re
+    TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+
+    updates: Dict = {}
+    labels = []
+
+    for field_name, time_val, label in [
+        ("morning_time", morning_time, "早报"),
+        ("digest_time",  digest_time,  "日报"),
+    ]:
+        if not time_val:
+            continue
+        m = TIME_RE.match(time_val)
+        if not m:
+            adapter.send_error(user_id, f"{label}时间格式错误，请用 HH:MM，如 08:30")
+            return
+        # normalize to HH:MM
+        h, mn = int(m.group(1)), int(m.group(2))
+        updates[field_name] = f"{h:02d}:{mn:02d}"
+        labels.append(f"**{label}** {h:02d}:{mn:02d}")
+
+    if not updates:
+        adapter.send_error(user_id, "请至少填写一个推送时间")
+        return
+
+    settings = db.get_user_settings(user_id)
+    settings.update(updates)
+    db.update_user_settings(user_id, settings)
+
+    # 通知调度器热更新
+    from bot.scheduler import TaskScheduler
+    scheduler = TaskScheduler.get_instance()
+    if scheduler:
+        scheduler.reschedule_user_push(
+            user_id,
+            morning_time=updates.get("morning_time"),
+            digest_time=updates.get("digest_time"),
+        )
+
+    label_str = "、".join(labels)
+    adapter.send_success(user_id, f"✅ 推送时间已更新！\n\n{label_str}\n\n**立即生效**，无需重启。")

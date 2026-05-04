@@ -451,6 +451,7 @@ def announcement_card(symbol: str, name: str, announcements: List[Dict]) -> Outg
 
 
 def settings_card(cfg_vals: Dict) -> OutgoingCard:
+    """系统设置卡片：含推送时间表单，无需重启即可生效"""
     alert_min = cfg_vals.get("alert_min", 5)
     digest_h  = cfg_vals.get("digest_h", 15)
     digest_m  = cfg_vals.get("digest_m", 30)
@@ -458,24 +459,30 @@ def settings_card(cfg_vals: Dict) -> OutgoingCard:
     morning_m = cfg_vals.get("morning_m", 0)
 
     content = (
-        "**⏱ 价格预警检查频率**\n"
-        f"　当前：每 **{alert_min}** 分钟检查一次\n"
-        "　修改：`/settings alert_interval 分钟数`\n"
-        "　例如：`/settings alert_interval 10`\n\n"
-        "**📊 收盘日报时间**\n"
-        f"　当前：每工作日 **{digest_h}:{digest_m:02d}**\n"
-        "　修改：`/settings digest_time HH:MM`\n"
-        "　例如：`/settings digest_time 16:00`\n\n"
-        "**🌅 早报时间**\n"
-        f"　当前：每工作日 **{morning_h}:{morning_m:02d}**\n"
-        "　修改：`/settings morning_time HH:MM`\n"
-        "　例如：`/settings morning_time 08:30`\n\n"
-        "⚠️ 修改后重启机器人生效（`bash restart.sh`）"
+        f"**⏱ 价格预警检查频率**　每 **{alert_min}** 分钟\n\n"
+        "**⏰ 修改推送时间**\n"
+        "填写 24 小时制，格式 `HH:MM`，留空则不修改"
     )
     return OutgoingCard(
         title="⚙️ 系统设置",
         content=content,
-        footer="配置保存在 config.py"
+        form=CardForm(
+            fields=[
+                CardFormField(
+                    name="morning_time",
+                    label="🌅 早报时间",
+                    placeholder=f"当前 {morning_h:02d}:{morning_m:02d}，如 08:30",
+                ),
+                CardFormField(
+                    name="digest_time",
+                    label="📊 日报时间",
+                    placeholder=f"当前 {digest_h:02d}:{digest_m:02d}，如 16:00",
+                ),
+            ],
+            submit_label="💾 保存推送时间",
+            submit_action="save_push_times",
+        ),
+        footer="仅修改您自己的推送时间，不影响其他用户"
     )
 
 

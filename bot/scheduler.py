@@ -62,6 +62,8 @@ class TaskScheduler:
         self._register_builtin_jobs()
         # 从数据库加载用户自定义任务
         self._load_user_jobs()
+        # 恢复用户自定义推送时间
+        self._restore_user_push_times()
         self._scheduler.start()
         logger.info("任务调度引擎启动")
 
@@ -128,6 +130,20 @@ class TaskScheduler:
         for task in tasks:
             self._register_task(task)
         logger.info(f"已加载 {len(tasks)} 个用户任务")
+
+    def _restore_user_push_times(self) -> None:
+        """启动时从 users.settings 恢复各用户的个性化推送时间"""
+        users = self._get_all_users()
+        for user in users:
+            uid = user["user_id"]
+            try:
+                settings = db.get_user_settings(uid)
+                morning_time = settings.get("morning_time")
+                digest_time  = settings.get("digest_time")
+                if morning_time or digest_time:
+                    self.reschedule_user_push(uid, morning_time, digest_time)
+            except Exception as e:
+                logger.warning(f"恢复用户 {uid} 推送时间失败: {e}")
 
     def _register_task(self, task: Dict) -> None:
         job_id = f"user_task_{task['id']}"
@@ -307,30 +323,37 @@ class TaskScheduler:
     # ── 内置任务实现 ──────────────────────────────────────────────────
 
     def _job_daily_digest_all(self) -> None:
-        """全量用户收盘日报（内置）"""
+        """全量用户收盘日报（内置）；有个人专属 job 的用户跳过，避免重复推送"""
         users = self._get_all_users()
         for user in users:
+            uid = user["user_id"]
+            # 如果用户已设置专属 digest job，跳过（该 job 自行处理）
+            if self._scheduler.get_job(f"user_digest_{uid}"):
+                continue
             platform = user.get("platform", "feishu")
             adapter = self.adapters.get(platform)
             if not adapter:
                 continue
             try:
-                self._send_daily_digest(adapter, user["user_id"])
+                self._send_daily_digest(adapter, uid)
             except Exception as e:
-                logger.error(f"日报推送失败 {user['user_id']}: {e}")
+                logger.error(f"日报推送失败 {uid}: {e}")
 
     def _job_index_report_all(self) -> None:
-        """全量用户指数早报（内置）"""
+        """全量用户指数早报（内置）；有个人专属 job 的用户跳过，避免重复推送"""
         users = self._get_all_users()
         for user in users:
+            uid = user["user_id"]
+            if self._scheduler.get_job(f"user_morning_{uid}"):
+                continue
             platform = user.get("platform", "feishu")
             adapter = self.adapters.get(platform)
             if not adapter:
                 continue
             try:
-                self._send_index_report(adapter, user["user_id"])
+                self._send_index_report(adapter, uid)
             except Exception as e:
-                logger.error(f"早报推送失败 {user['user_id']}: {e}")
+                logger.error(f"早报推送失败 {uid}: {e}")
 
     def _job_check_price_alerts(self) -> None:
         """检查所有用户价格预警"""
@@ -423,6 +446,46 @@ class TaskScheduler:
         job_id = f"user_task_{task_id}"
         if self._scheduler.get_job(job_id):
             self._scheduler.remove_job(job_id)
+
+    def reschedule_user_push(self, user_id: str,
+                             morning_time: Optional[str] = None,
+                             digest_time: Optional[str] = None) -> None:
+        """
+        为单个用户热更新专属推送时间（无需重启）。
+        morning_time / digest_time: "HH:MM"，None 表示不修改该项。
+        """
+        def _make_send_fn(send_fn, uid: str):
+            def job():
+                settings = db.get_user_settings(uid)
+                if settings.get("quiet_mode"):
+                    return
+                platform = self._get_user_platform(uid)
+                adapter = self.adapters.get(platform)
+                if adapter:
+                    send_fn(adapter, uid)
+            return job
+
+        if morning_time:
+            h, m = map(int, morning_time.split(":"))
+            job_id = f"user_morning_{user_id}"
+            self._scheduler.add_job(
+                _make_send_fn(self._send_index_report, user_id),
+                CronTrigger(hour=h, minute=m, day_of_week="mon-fri"),
+                id=job_id,
+                replace_existing=True,
+            )
+            logger.info(f"用户 {user_id} 早报已调整为 {morning_time}")
+
+        if digest_time:
+            h, m = map(int, digest_time.split(":"))
+            job_id = f"user_digest_{user_id}"
+            self._scheduler.add_job(
+                _make_send_fn(self._send_daily_digest, user_id),
+                CronTrigger(hour=h, minute=m, day_of_week="mon-fri"),
+                id=job_id,
+                replace_existing=True,
+            )
+            logger.info(f"用户 {user_id} 日报已调整为 {digest_time}")
 
 
 # ── 模块数据拉取 ───────────────────────────────────────────────────────
