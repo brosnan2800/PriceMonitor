@@ -1,0 +1,18 @@
+services:
+  bot:
+    build: .
+    container_name: secretary-bot
+    # 从 .env 文件加载所有密钥（首次部署前需先创建 .env）
+    env_file:
+      - .env
+    volumes:
+      # SQLite 数据库持久化（重要！删除此行会丢失自选/预警数据）
+      - ./data:/app/data
+      # 日志持久化
+      - ./logs:/app/logs
+      # .env 挂载进容器，feishu_setup.py 扫码后可写入
+      - ./.env:/app/.env
+    restart: unless-stopped
+    # 保持 stdin/tty，允许 feishu_setup.py 在容器内显示二维码
+    stdin_open: true
+    tty: true

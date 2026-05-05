@@ -24,11 +24,8 @@ logger = logging.getLogger(__name__)
 # ── 配置 ──────────────────────────────────────────────────────────────
 
 def _get_config():
-    try:
-        import config as cfg
-        return cfg
-    except ImportError:
-        return None
+    import config_loader
+    return config_loader
 
 def _api_key() -> str:
     cfg = _get_config()

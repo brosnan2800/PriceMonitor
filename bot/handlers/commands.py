@@ -737,7 +737,7 @@ class CommandHandler:
             )
             if not is_configured():
                 self.adapter.send_text(
-                    msg.user_id, "⚠️ Alpha Vantage key 未配置，无法查询宏观数据\n请在 config.py 中设置 AV_API_KEY"
+                    msg.user_id, "⚠️ Alpha Vantage key 未配置，无法查询宏观数据\n请在 .env 文件中设置 ALPHA_VANTAGE_API_KEY"
                 )
                 return
             if is_quota_exhausted():
@@ -793,10 +793,7 @@ class CommandHandler:
 
         # /settings（无参数）或按钮回调 — 显示推送时间配置卡片
         if len(parts) <= 1:
-            try:
-                import config as cfg
-            except ImportError:
-                cfg = None
+            import config_loader as cfg
             user_settings = db.get_user_settings(msg.user_id)
             # 用户设置优先，其次 config.py 默认值
             def _parse_hm(time_str, default_h, default_m):
@@ -829,8 +826,9 @@ class CommandHandler:
         val = parts[2].strip() if len(parts) > 2 else ""
 
         try:
-            import config as cfg
-            cfg_path = cfg.__file__
+            import config_loader as cfg
+            cfg_path = getattr(cfg, "_cfg", None)
+            cfg_path = cfg_path.__file__ if cfg_path else None
 
             if key == "alert_interval":
                 minutes = int(val)
@@ -864,21 +862,42 @@ class CommandHandler:
 
 
 def _update_config_value(cfg_path: str, key: str, value) -> None:
-    """直接修改 config.py 中某个配置项的值"""
+    """修改 config.py 或 .env 中某个配置项的值"""
     import re
-    with open(cfg_path, "r", encoding="utf-8") as f:
-        content = f.read()
-    new_content = re.sub(
-        rf"^({key}\s*=\s*).*$",
-        rf"\g<1>{repr(value)}",
-        content,
-        flags=re.MULTILINE
-    )
-    if new_content == content:
-        # 不存在则追加
-        new_content = content.rstrip() + f"\n{key} = {repr(value)}\n"
-    with open(cfg_path, "w", encoding="utf-8") as f:
-        f.write(new_content)
+    import os
+
+    # 优先修改 config.py（本地模式）
+    if cfg_path and os.path.exists(cfg_path):
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        new_content = re.sub(
+            rf"^({key}\s*=\s*).*$",
+            rf"\g<1>{repr(value)}",
+            content,
+            flags=re.MULTILINE
+        )
+        if new_content == content:
+            new_content = content.rstrip() + f"\n{key} = {repr(value)}\n"
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        return
+
+    # Docker 模式：修改 .env 文件
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        str_val = str(value)
+        new_content = re.sub(
+            rf"^({key}\s*=).*$",
+            rf"\g<1>{str_val}",
+            content,
+            flags=re.MULTILINE
+        )
+        if new_content == content:
+            new_content = content.rstrip() + f"\n{key}={str_val}\n"
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
 
 
 def _save_user_push_time(adapter, user_id: str,

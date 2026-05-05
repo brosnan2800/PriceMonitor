@@ -28,13 +28,12 @@ logger = logging.getLogger(__name__)
 
 
 def _setup_logging():
-    try:
-        import config as cfg
-        level = getattr(logging, getattr(cfg, "LOG_LEVEL", "INFO"))
-        log_file = getattr(cfg, "LOG_FILE", "secretary.log")
-    except ImportError:
-        level = logging.INFO
-        log_file = "secretary.log"
+    import config_loader as cfg
+    level = getattr(logging, getattr(cfg, "LOG_LEVEL", "INFO"))
+    log_file = getattr(cfg, "LOG_FILE", "secretary.log")
+    # Docker 模式下日志写到 logs/ 目录
+    import os
+    os.makedirs(os.path.dirname(log_file), exist_ok=True) if os.path.dirname(log_file) else None
 
     logging.basicConfig(
         level=level,
@@ -47,12 +46,8 @@ def _setup_logging():
 
 
 def _load_config():
-    try:
-        import config as cfg
-        return cfg
-    except ImportError:
-        logger.error("找不到 config.py，请先运行: cp config.example.py config.py")
-        sys.exit(1)
+    import config_loader as cfg
+    return cfg
 
 
 def build_feishu_adapter(cfg):
@@ -116,7 +111,7 @@ def main():
             adapters["telegram"] = adapter
 
     if not adapters:
-        logger.error("没有可用的渠道适配器，请检查 config.py 配置")
+        logger.error("没有可用的渠道适配器，请检查 .env 或 config.py 配置")
         sys.exit(1)
 
     # 为每个适配器绑定指令处理器

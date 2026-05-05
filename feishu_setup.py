@@ -10,11 +10,12 @@
     python feishu_setup.py
 """
 
-from typing import Optional
 import json
 import time
 import sys
 import re
+from pathlib import Path
+from typing import Optional
 from urllib.request import urlopen, Request
 from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
@@ -118,14 +119,48 @@ def _poll(device_code: str, interval: int, expire_in: int) -> Optional[dict]:
     return None
 
 
+def _write_env(app_id: str, app_secret: str, open_id: str) -> bool:
+    """将飞书凭证写入 .env 文件（Docker 模式）"""
+    env_path = Path(".env")
+    example_path = Path(".env.example")
+
+    if not env_path.exists():
+        if example_path.exists():
+            import shutil
+            shutil.copy(example_path, env_path)
+        else:
+            env_path.write_text(
+                "# 综合秘书机器人配置\n"
+                "FEISHU_APP_ID=\nFEISHU_APP_SECRET=\nFEISHU_OPEN_ID=\n",
+                encoding="utf-8"
+            )
+
+    content = env_path.read_text(encoding="utf-8")
+
+    def upsert_env(text: str, key: str, value: str) -> str:
+        pattern = rf'^{key}=.*$'
+        replacement = f'{key}={value}'
+        new_text, n = re.subn(pattern, replacement, text, flags=re.MULTILINE)
+        if n == 0:
+            new_text = text.rstrip() + f'\n{replacement}\n'
+        return new_text
+
+    content = upsert_env(content, "FEISHU_APP_ID", app_id)
+    content = upsert_env(content, "FEISHU_APP_SECRET", app_secret)
+    if open_id:
+        content = upsert_env(content, "FEISHU_OPEN_ID", open_id)
+
+    env_path.write_text(content, encoding="utf-8")
+    return True
+
+
 def _write_config(app_id: str, app_secret: str, open_id: str):
-    """将飞书凭证写入 config.py"""
+    """将飞书凭证写入 config.py（本地模式）"""
     try:
         with open("config.py", "r", encoding="utf-8") as f:
             content = f.read()
     except FileNotFoundError:
-        print("❌ 找不到 config.py，请先运行: cp config.example.py config.py")
-        sys.exit(1)
+        return False
 
     def replace_or_append(text, key, value):
         pattern = rf'^{key}\s*=.*$'
@@ -142,6 +177,7 @@ def _write_config(app_id: str, app_secret: str, open_id: str):
 
     with open("config.py", "w", encoding="utf-8") as f:
         f.write(content)
+    return True
 
 
 def main():
@@ -186,17 +222,27 @@ def main():
         print(f"   你的 open_id: {open_id}")
     print()
 
-    _write_config(app_id, app_secret, open_id)
-    print("✅ 配置已写入 config.py")
+    _write_env(app_id, app_secret, open_id)
+    print("✅ 配置已写入 .env")
+
+    wrote_config = _write_config(app_id, app_secret, open_id)
+    if wrote_config:
+        print("✅ 配置也已同步写入 config.py（本地兼容）")
+
     print()
 
     if not open_id:
         print("⚠️  未获取到你的 open_id，私聊推送需要手动设置 FEISHU_OPEN_ID")
-        print("   可以在飞书群里把机器人加进去，然后用 python feishu_bot.py 获取")
+        print("   请在 .env 中手动填入 FEISHU_OPEN_ID=ou_xxxx")
     else:
-        print("🎉 配置完成！现在可以运行价格监控了：")
-        print("   python price_monitor.py --test   # 测试")
-        print("   python price_monitor.py          # 启动监控")
+        print("🎉 配置完成！现在可以启动机器人了：")
+        print()
+        print("   Docker 模式：")
+        print("   docker-compose restart    # 重启容器读取新配置")
+        print()
+        print("   本地模式：")
+        print("   bash restart.sh           # 后台重启")
+        print("   python3 bot/app.py        # 前台调试")
 
     print()
     print("=" * 50)

@@ -89,10 +89,7 @@ class TaskScheduler:
     # ── 内置任务 ──────────────────────────────────────────────────────
 
     def _register_builtin_jobs(self) -> None:
-        try:
-            import config as cfg
-        except ImportError:
-            cfg = None
+        import config_loader as cfg
 
         alert_min = getattr(cfg, "PRICE_ALERT_INTERVAL_MINUTES", 5)
         digest_h  = getattr(cfg, "DAILY_DIGEST_HOUR", 15)

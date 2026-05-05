@@ -1,23 +1,16 @@
 [Unit]
-Description=USD/CNH and Brent Oil Price Monitor Service
+Description=综合秘书机器人 Secretary Bot v2
 After=network.target
 Wants=network.target
 
 [Service]
 Type=simple
-User=ubuntu  # 更改为你的用户名
-Group=ubuntu # 更改为你的用户组
-WorkingDirectory=/home/ubuntu/price-monitor  # 更改为项目目录
-Environment="PATH=/home/ubuntu/price-monitor/venv/bin"  # 如果使用虚拟环境
-Environment="ALPHA_VANTAGE_API_KEY=your_api_key_here"  # 可选：使用环境变量
-Environment="TELEGRAM_BOT_TOKEN=your_bot_token_here"
-Environment="TELEGRAM_CHAT_ID=your_chat_id_here"
+User=ubuntu                                          # 更改为你的用户名
+Group=ubuntu                                         # 更改为你的用户组
+WorkingDirectory=/home/ubuntu/PriceMonitor           # 更改为项目实际路径
+EnvironmentFile=/home/ubuntu/PriceMonitor/.env       # 从 .env 加载所有密钥
 
-# 使用虚拟环境中的Python
-ExecStart=/home/ubuntu/price-monitor/venv/bin/python /home/ubuntu/price-monitor/price_monitor.py
-
-# 或者直接使用系统Python（如果不使用虚拟环境）
-# ExecStart=/usr/bin/python3 /home/ubuntu/price-monitor/price_monitor.py
+ExecStart=/usr/bin/python3 /home/ubuntu/PriceMonitor/bot/app.py
 
 Restart=on-failure
 RestartSec=10
@@ -28,7 +21,7 @@ StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/home/ubuntu/price-monitor
+ReadWritePaths=/home/ubuntu/PriceMonitor
 ProtectHome=read-only
 
 [Install]

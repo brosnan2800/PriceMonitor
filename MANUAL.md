@@ -1,7 +1,7 @@
 # 综合秘书机器人 操作手册 & 技术文档
 
 **版本**: v2.1  
-**更新日期**: 2026-05-04
+**更新日期**: 2026-05-05
 
 ---
 
@@ -41,24 +41,87 @@
 
 ## 2. 快速开始
 
-### 2.1 安装依赖
+支持两种部署方式，推荐 Docker。
+
+---
+
+### 方式一：Docker 部署（推荐）
+
+> **前提**
+> 1. 安装 [Docker Desktop](https://docs.docker.com/get-docker/)（Mac/Windows）或 Docker Engine（Linux）
+> 2. 拥有飞书企业账号（个人账号无法创建应用）
+>    - 免费注册测试企业：[open.feishu.cn](https://open.feishu.cn) → 立即使用 → 创建企业 → 选"体验版"
+>    - 在飞书开发者控制台创建一个自建应用（PersonalAgent 类型），拿到 App ID 和 App Secret
+
+#### 2.1 初次部署
+
+```bash
+# 1. 克隆项目
+git clone https://github.com/brosnan2800/PriceMonitor.git
+cd PriceMonitor
+
+# 2. 创建配置文件（密钥文件，不入 Git）
+cp .env.example .env
+
+# 3. 启动容器（首次构建镜像需要约 1-2 分钟）
+docker-compose up -d
+
+# 4. 飞书扫码配置（在容器内运行，终端会显示二维码）
+docker exec -it secretary-bot python3 feishu_setup.py
+#   → 用飞书 App 扫码授权
+#   → 扫码成功后自动将凭据写入 .env
+
+# 5. 重启容器读取新凭据
+docker-compose restart
+
+# 6. 查看日志确认连接成功
+docker-compose logs -f
+```
+
+#### 2.2 Alpha Vantage Key（可选）
+
+用于早报的汇率/原油/新闻情绪模块和手动宏观查询：
+
+1. 访问 [https://www.alphavantage.co/support/#api-key](https://www.alphavantage.co/support/#api-key) 免费注册
+2. 复制你的 API Key
+3. 编辑 `.env`，填入 `ALPHA_VANTAGE_API_KEY=你的key`
+4. `docker-compose restart`
+
+#### 2.3 日常管理
+
+```bash
+docker-compose up -d      # 启动（后台）
+docker-compose down       # 停止
+docker-compose restart    # 重启
+docker-compose logs -f    # 实时日志
+docker-compose pull && docker-compose up -d --build  # 更新代码后重新构建
+```
+
+> ✅ **数据安全**：`data/`（SQLite 数据库）和 `logs/` 目录通过 volume 挂载，
+> 容器删除重建不会丢失自选/预警数据。
+
+---
+
+### 方式二：本地直接运行
+
+#### 2.4 安装依赖
 
 ```bash
 pip3 install -r requirements.txt
 ```
 
-### 2.2 配置飞书机器人（首次使用）
+#### 2.5 配置飞书机器人（首次使用）
 
 ```bash
-python feishu_setup.py
+python3 feishu_setup.py
 ```
 
 - 终端打印二维码，用飞书 App 扫码授权
-- 扫码成功后自动将 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_OPEN_ID` 写入 `config.py`
+- 扫码成功后自动将凭据写入 `config.py` 和 `.env`
 
 > ⚠️ 必须在系统终端（VS Code Terminal 等）中运行，不是在聊天窗口里。
 
-### 2.3 编辑配置文件
+#### 2.6 编辑配置文件
 
 ```bash
 cp config.example.py config.py
@@ -66,7 +129,7 @@ cp config.example.py config.py
 # 可选：填写 ALPHA_VANTAGE_API_KEY 以启用 AV 模块
 ```
 
-### 2.4 启动服务
+#### 2.7 启动服务
 
 ```bash
 bash restart.sh
@@ -74,7 +137,7 @@ bash restart.sh
 
 服务正常启动后，在飞书向机器人发送 `/menu` 即可看到功能面板。
 
-### 2.5 停止服务
+#### 2.8 停止服务
 
 ```bash
 bash stop.sh
@@ -84,22 +147,26 @@ bash stop.sh
 
 ## 3. 配置说明
 
-所有配置在 `config.py`（从 `config.example.py` 复制）。
+配置支持两种方式，优先级：**环境变量 / `.env` 文件** > `config.py`
+
+- **Docker 部署**：编辑 `.env`（`feishu_setup.py` 扫码后自动填入飞书凭据）
+- **本地部署**：编辑 `config.py`（从 `config.example.py` 复制）
 
 ### 3.1 飞书应用（必填）
 
-```python
-FEISHU_APP_ID     = "cli_xxxxxxxxxxxxxxxx"
-FEISHU_APP_SECRET = "xxxxxxxxxxxxxxxxxxxxxxx"
-FEISHU_OPEN_ID    = "ou_xxxxxxxxxxxxxxxx"
+```bash
+# .env 格式
+FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxx
+FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxx
+FEISHU_OPEN_ID=ou_xxxxxxxxxxxxxxxx
 ```
 
-> 通过 `feishu_setup.py` 扫码后自动填写。
+> 通过 `feishu_setup.py` 扫码后自动填写，无需手动获取。
 
 ### 3.2 可选：Alpha Vantage
 
-```python
-ALPHA_VANTAGE_API_KEY = "your_key"  # 免费 25次/天
+```bash
+ALPHA_VANTAGE_API_KEY=your_key   # 免费 25次/天
 ```
 
 申请地址：https://www.alphavantage.co/support/#api-key
@@ -116,49 +183,61 @@ ALPHA_VANTAGE_API_KEY = "your_key"  # 免费 25次/天
 
 ### 3.3 调度配置
 
-```python
-PRICE_ALERT_INTERVAL_MINUTES = 5   # 价格预警检查频率（分钟）
-DAILY_DIGEST_HOUR   = 15           # 晚报时间
-DAILY_DIGEST_MINUTE = 30
-MORNING_REPORT_HOUR   = 9          # 早报时间
-MORNING_REPORT_MINUTE = 0
+```bash
+PRICE_ALERT_INTERVAL_MINUTES=5   # 价格预警检查频率（分钟）
+DAILY_DIGEST_HOUR=15             # 晚报时间
+DAILY_DIGEST_MINUTE=30
+MORNING_REPORT_HOUR=9            # 早报时间
+MORNING_REPORT_MINUTE=0
 ```
 
 > 可通过菜单「新建定制 → 推送时间」卡片动态修改，无需重启，仅影响自己。
 
 ### 3.4 可选：Telegram
 
-```python
-TELEGRAM_BOT_TOKEN = "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
-TELEGRAM_CHAT_ID   = "你的Chat ID"
+```bash
+TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+TELEGRAM_CHAT_ID=你的Chat ID
 ```
 
 ### 3.5 日志
 
-```python
-LOG_LEVEL = "INFO"
-LOG_FILE  = "price_monitor.log"
+```bash
+LOG_LEVEL=INFO
+LOG_FILE=logs/secretary.log   # Docker 模式建议写到 logs/ 目录
 ```
 
 ---
 
 ## 4. 运行方式
 
-### 4.1 脚本管理
+### 4.1 Docker 管理（推荐）
 
 ```bash
-bash restart.sh        # 后台启动（推荐）
-bash stop.sh           # 停止所有服务
-tail -f price_monitor.log   # 查看实时日志
+docker-compose up -d       # 后台启动
+docker-compose down        # 停止
+docker-compose restart     # 重启
+docker-compose logs -f     # 实时日志
+docker-compose up -d --build  # 更新代码后重新构建镜像
 ```
 
-### 4.2 直接运行（调试用）
+### 4.2 本地脚本管理
+
+```bash
+bash restart.sh            # 后台启动
+bash stop.sh               # 停止所有服务
+tail -f secretary.log      # 查看实时日志
+```
+
+### 4.3 直接运行（调试用）
 
 ```bash
 python3 bot/app.py
 ```
 
-### 4.3 systemd 服务（Linux 长期运行）
+### 4.4 systemd 服务（Linux 长期运行，非 Docker）
+
+修改 `price-monitor.service` 中的 `WorkingDirectory` 为实际路径后：
 
 ```bash
 sudo cp price-monitor.service /etc/systemd/system/
