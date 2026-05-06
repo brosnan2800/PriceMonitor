@@ -11,7 +11,7 @@ import logging
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +204,49 @@ def add_task(user_id: str, task_type: str, config: Dict, cron_expr: str) -> int:
             (user_id, task_type, json.dumps(config, ensure_ascii=False), cron_expr)
         )
         return cur.lastrowid
+
+
+def upsert_announcement_task_merge(user_id: str, new_symbols: List[str], cron_expr: Optional[str]) -> Tuple[int, bool, List[str], str]:
+    """公告监控 upsert-merge：
+    - 有则累加股票（去重），cron 有传则更新，无传则沿用
+    - 无则新建（cron 默认 0 9,12,15 * * 1-5）
+    返回 (task_id, is_new, final_symbols, final_cron)
+    """
+    default_cron = "0 9,12,15 * * 1-5"
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT id, config, cron_expr FROM tasks WHERE user_id = ? AND task_type = 'announcement' LIMIT 1",
+            (user_id,)
+        ).fetchone()
+        if row:
+            existing_config = json.loads(row["config"] or "{}")
+            existing_symbols = existing_config.get("symbols", [])
+            # 累加去重，保持顺序
+            merged = list(dict.fromkeys(existing_symbols + new_symbols))
+            final_cron = cron_expr if cron_expr else row["cron_expr"]
+            config_json = json.dumps({"symbols": merged}, ensure_ascii=False)
+            conn.execute(
+                "UPDATE tasks SET config = ?, cron_expr = ?, enabled = 1 WHERE id = ?",
+                (config_json, final_cron, row["id"])
+            )
+            return row["id"], False, merged, final_cron
+        else:
+            final_cron = cron_expr if cron_expr else default_cron
+            config_json = json.dumps({"symbols": new_symbols}, ensure_ascii=False)
+            cur = conn.execute(
+                "INSERT INTO tasks (user_id, task_type, config, cron_expr) VALUES (?, 'announcement', ?, ?)",
+                (user_id, config_json, final_cron)
+            )
+            return cur.lastrowid, True, new_symbols, final_cron
+
+
+def update_task_config(task_id: int, config: Dict) -> None:
+    """更新任务 config 字段"""
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE tasks SET config = ? WHERE id = ?",
+            (json.dumps(config, ensure_ascii=False), task_id)
+        )
 
 
 def get_tasks(user_id: str, enabled_only: bool = False) -> List[Dict]:

@@ -162,6 +162,7 @@ class TaskScheduler:
             "daily_report":  self._make_daily_report_job,
             "price_alert":   self._make_price_alert_job,
             "index_report":  self._make_index_report_job,
+            "announcement":  self._make_announcement_job,
         }
 
         make_fn = handler_map.get(task_type)
@@ -196,17 +197,34 @@ class TaskScheduler:
             adapter = self.adapters.get(platform)
             if not adapter or not symbols:
                 return
+
+            # 收集所有有新公告的股票
+            all_results: List[Dict] = []  # [{symbol, name, announcements}]
             for symbol in symbols:
                 anns = get_stock_announcements(symbol, important_only=True)
                 if anns:
-                    name = anns[0].get("name", symbol) if anns else symbol
-                    card = announcement_card(symbol, name, anns)
-                    content_hash = hashlib.md5(
-                        json.dumps([a["title"] for a in anns]).encode()
-                    ).hexdigest()
-                    if not db.already_pushed(user_id, content_hash, within_hours=24):
-                        adapter.send_card(user_id, card)
-                        db.log_push(user_id, task["id"], content_hash)
+                    name = anns[0].get("name", symbol)
+                    all_results.append({"symbol": symbol, "name": name, "announcements": anns})
+
+            # 没有任何新公告 → 静默跳过
+            if not all_results:
+                db.update_task_last_run(task["id"])
+                return
+
+            # 所有股票合并一张卡，去重推送
+            content_hash = hashlib.md5(
+                json.dumps([
+                    a["title"]
+                    for r in all_results
+                    for a in r["announcements"]
+                ]).encode()
+            ).hexdigest()
+            if not db.already_pushed(user_id, content_hash, within_hours=24):
+                from bot.formatters.cards import multi_announcement_card
+                card = multi_announcement_card(all_results)
+                adapter.send_card(user_id, card)
+                db.log_push(user_id, task["id"], content_hash)
+
             db.update_task_last_run(task["id"])
         return job
 

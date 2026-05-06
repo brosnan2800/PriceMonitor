@@ -19,6 +19,7 @@ from bot.formatters.cards import (
     announcement_card, settings_card,
     alert_setup_card, alert_input_card,
     morning_modules_card, DEFAULT_MORNING_MODULES, DEFAULT_DAILY_MODULES,
+    del_announcement_stock_card,
 )
 from data import db
 from data.sources.akshare_source import auto_quote, search_stock, _CRYPTO_MAP, _GLOBAL_INDEX_MAP
@@ -358,6 +359,9 @@ class CommandHandler:
             "go_remove_watchlist":  lambda: self._cmd_watchlist(msg),  # 显示带删除按钮的列表
             "go_tasks":             lambda: self._cmd_tasks(msg),
             "go_newtask":           lambda: self._cmd_newtask(msg),
+            "go_newtask_announcement": lambda: self.adapter.send_card(
+                msg.user_id, newtask_announcement_card()
+            ),
             "go_add":               lambda: self.adapter.send_card(
                 msg.user_id, add_input_card()
             ),
@@ -384,6 +388,8 @@ class CommandHandler:
             "save_push_times":      lambda: self._save_push_times_callback(msg, data),
             "toggle_task_btn":      lambda: self._toggle_task_btn(msg, data),
             "del_task_btn":         lambda: self._del_task_btn(msg, data),
+            "del_announcement_stock":    lambda: self._del_announcement_stock(msg, data),
+            "do_del_announcement_stock": lambda: self._do_del_announcement_stock(msg, data),
         }
 
         handler = routing.get(action)
@@ -608,35 +614,113 @@ class CommandHandler:
         )
 
     def _do_newtask_announcement(self, msg: "IncomingMessage", data: Dict) -> None:
-        """公告监控：用户输入股票代码，写入 tasks 表"""
+        """公告监控：新增股票累加到已有任务，没有则新建。频率有填则更新，无填则沿用已有频率。"""
         raw = data.get("symbols", "").strip()
         if not raw:
             self.adapter.send_error(msg.user_id, "请输入股票代码")
             return
 
-        symbols = [s.strip() for s in raw.replace("，", ",").split(",") if s.strip()]
-        if not symbols:
+        new_symbols = [s.strip() for s in raw.replace("，", ",").split(",") if s.strip()]
+        if not new_symbols:
             self.adapter.send_error(msg.user_id, "未识别到有效股票代码")
             return
 
-        config = {"symbols": symbols}
-        cron = "0 9,12,15 * * 1-5"   # 每天 09:00 / 12:00 / 15:00 检查
-        task_id = db.add_task(msg.user_id, "announcement", config, cron)
+        # 解析检查时间点（留空则沿用已有任务的 cron，无任务则默认 9,12,15）
+        check_times_raw = data.get("check_times", "").strip()
+        if check_times_raw:
+            try:
+                hours = sorted(set(
+                    int(h.strip()) for h in check_times_raw.replace("，", ",").split(",")
+                    if h.strip().isdigit() and 0 <= int(h.strip()) <= 23
+                ))
+                if not hours:
+                    raise ValueError
+            except ValueError:
+                self.adapter.send_error(msg.user_id, "时间格式错误，请填小时数，如 9,12,15")
+                return
+            cron = f"0 {','.join(str(h) for h in hours)} * * 1-5"
+            times_display = " / ".join(f"{h:02d}:00" for h in hours)
+        else:
+            cron = None  # 交给 upsert 决定
+            times_display = None
+
+        task_id, is_new, final_symbols, final_cron = db.upsert_announcement_task_merge(
+            msg.user_id, new_symbols, cron
+        )
 
         from bot.scheduler import TaskScheduler
         scheduler = TaskScheduler.get_instance()
         if scheduler:
             scheduler.register_task_by_id(task_id)
 
-        symbol_str = "、".join(symbols)
+        if not times_display:
+            # 解析 final_cron 展示时间
+            try:
+                h_part = final_cron.split()[1]
+                times_display = " / ".join(f"{int(h):02d}:00" for h in h_part.split(","))
+            except Exception:
+                times_display = final_cron
+
+        added = [s for s in new_symbols if s in final_symbols]
+        action = "已创建" if is_new else f"已添加 {len(added)} 只"
         self.adapter.send_success(
             msg.user_id,
-            f"股票公告监控已创建！\n\n"
-            f"**监控标的：** {symbol_str}\n"
-            f"**推送时间：** 每个交易日 09:00 / 12:00 / 15:00\n"
-            f"**任务编号：** #{task_id}\n\n"
-            f"发送 `/tasks` 查看所有任务"
+            f"📢 公告监控{action}！\n\n"
+            f"**当前监控全部股票：** {'、'.join(final_symbols)}\n"
+            f"**检查时间：** 每个交易日 {times_display}\n"
+            f"有新公告才推送，所有股票合并一张卡片\n\n"
+            f"发送 `/tasks` 查看详情 | 可继续添加股票"
         )
+
+    def _del_announcement_stock(self, msg: "IncomingMessage", data: Dict) -> None:
+        """显示「移除单只股票」选择卡片"""
+        task_id = int(data.get("task_id", 0))
+        if not task_id:
+            return
+        tasks = db.get_tasks(msg.user_id)
+        task = next((t for t in tasks if t["id"] == task_id), None)
+        if not task:
+            self.adapter.send_error(msg.user_id, "未找到该任务")
+            return
+        symbols = task.get("config", {}).get("symbols", [])
+        if not symbols:
+            self.adapter.send_error(msg.user_id, "该任务暂无监控股票")
+            return
+        self.adapter.send_card(msg.user_id, del_announcement_stock_card(task_id, symbols))
+
+    def _do_del_announcement_stock(self, msg: "IncomingMessage", data: Dict) -> None:
+        """执行移除单只股票"""
+        task_id = int(data.get("task_id", 0))
+        symbol = data.get("symbol", "").strip()
+        if not task_id or not symbol:
+            return
+        tasks = db.get_tasks(msg.user_id)
+        task = next((t for t in tasks if t["id"] == task_id), None)
+        if not task:
+            self.adapter.send_error(msg.user_id, "未找到该任务")
+            return
+        symbols = task.get("config", {}).get("symbols", [])
+        if symbol not in symbols:
+            self.adapter.send_error(msg.user_id, f"{symbol} 不在监控列表中")
+            return
+        symbols.remove(symbol)
+        if symbols:
+            db.update_task_config(task_id, {"symbols": symbols})
+            from bot.scheduler import TaskScheduler
+            scheduler = TaskScheduler.get_instance()
+            if scheduler:
+                scheduler.register_task_by_id(task_id)
+            self.adapter.send_success(
+                msg.user_id,
+                f"✅ 已移除 {symbol}\n\n"
+                f"**剩余监控股票：** {'、'.join(symbols)}"
+            )
+        else:
+            # 没有股票了，直接删任务
+            db.delete_task(task_id)
+            self.adapter.send_success(msg.user_id, f"✅ 已移除 {symbol}，监控列表为空，任务已自动删除")
+        self._refresh_tasks_card(msg)
+
 
     # ── 任务卡片内联操作（暂停/删除）────────────────────────────────
 
@@ -718,9 +802,24 @@ class CommandHandler:
         )
 
     def _save_push_times_callback(self, msg: "IncomingMessage", data: Dict) -> None:
-        """从 settings 卡片表单保存推送时间"""
-        morning_time = (data.get("morning_time") or "").strip()
-        digest_time  = (data.get("digest_time") or "").strip()
+        """从 settings 卡片表单保存推送时间 + 预警间隔"""
+        morning_time   = (data.get("morning_time") or "").strip()
+        digest_time    = (data.get("digest_time") or "").strip()
+        alert_interval = (data.get("alert_interval") or "").strip()
+
+        # 处理预警间隔（写 config.py/env，需重启）
+        if alert_interval:
+            try:
+                minutes = int(alert_interval)
+                if not (1 <= minutes <= 60):
+                    raise ValueError
+                import config_loader as cfg
+                cfg_path = getattr(getattr(cfg, "_cfg", None), "__file__", None)
+                _update_config_value(cfg_path, "PRICE_ALERT_INTERVAL_MINUTES", minutes)
+            except ValueError:
+                self.adapter.send_text(msg.user_id, "❌ 预警间隔需为 1~60 的整数")
+                return
+
         _save_user_push_time(
             self.adapter, msg.user_id,
             morning_time=morning_time or None,

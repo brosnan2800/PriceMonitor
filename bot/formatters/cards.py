@@ -359,11 +359,26 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
             status = "🟢" if t.get("enabled") else "⏸️"
             type_name = task_type_names.get(t.get("task_type", ""), t.get("task_type", ""))
             cron = t.get("cron_expr", "")
-            lines.append(f"{status} #{t['id']} {type_name}　`{cron}`")
+            task_type = t.get("task_type", "")
+
+            # 公告监控：额外显示股票列表
+            if task_type == "announcement":
+                symbols = t.get("config", {}).get("symbols", [])
+                symbols_str = "、".join(symbols) if symbols else "无"
+                lines.append(f"{status} #{t['id']} {type_name}　`{cron}`")
+                lines.append(f"　　监控股票：{symbols_str}")
+            else:
+                lines.append(f"{status} #{t['id']} {type_name}　`{cron}`")
+
             toggle_label = "⏸ 暂停" if t.get("enabled") else "▶ 恢复"
             task_buttons.append(
                 CardButton(f"{toggle_label} #{t['id']}", "toggle_task_btn", {"task_id": t["id"]})
             )
+            # 公告监控：增加「删除一只股票」按钮
+            if task_type == "announcement":
+                task_buttons.append(
+                    CardButton(f"➖ 移除股票", "del_announcement_stock", {"task_id": t["id"]})
+                )
             task_buttons.append(
                 CardButton(f"🗑 删除 #{t['id']}", "del_task_btn", {"task_id": t["id"]}, style="danger")
             )
@@ -393,16 +408,18 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
 
 
 def newtask_type_card() -> OutgoingCard:
-    """新建定制任务：价格预警 + 早报内容 + 推送时间"""
+    """新建定制任务：价格预警 + 公告监控 + 早报内容 + 推送时间"""
     return OutgoingCard(
         title="➕ 新建定制 / 配置推送",
         content=(
             "**🔔 价格预警** — 价格/涨跌幅达到阈值时提醒\n\n"
+            "**📢 公告监控** — A股重要公告自动推送（年报/分红/重大事项）\n\n"
             "**📋 自定义早报** — 选择早报包含哪些指数/数据\n\n"
             "**⏰ 推送时间** — 修改早报/晚报的推送时间"
         ),
         buttons=[
             CardButton("🔔 价格预警", "go_alert_input", {}, style="primary"),
+            CardButton("📢 公告监控", "go_newtask_announcement", {}),
             CardButton("📋 自定义早报", "go_morning_modules", {"report_type": "morning"}),
             CardButton("⏰ 推送时间", "go_settings", {}),
         ]
@@ -429,20 +446,36 @@ def newtask_time_card(task_type: str, options: List[Dict]) -> OutgoingCard:
 
 
 def newtask_announcement_card() -> OutgoingCard:
-    """新建股票公告监控：输入股票代码"""
+    """新建股票公告监控：股票代码 + 检查时间点"""
     return OutgoingCard(
-        title="📢 股票公告监控 · 输入股票",
-        content="请输入要监控的股票代码或名称\n多只股票用逗号分隔，如 `600519, 000858`",
-        input_field=CardInput(
-            name="do_newtask_announcement.symbols",
-            placeholder="如 600519 / 贵州茅台 / 600519,000858",
-            action="do_newtask_announcement",
+        title="📢 股票公告监控",
+        content=(
+            "设置后，在指定时间点自动检查重要公告（年报/分红/重大事项等）并推送。\n\n"
+            "**检查时间点**示例：`9,12,15` = 每天9点、12点、15点各检查一次（工作日）"
         ),
+        form=CardForm(
+            fields=[
+                CardFormField(
+                    name="symbols",
+                    label="📌 股票代码（必填）",
+                    placeholder="多只用逗号分隔，如 600519,000858",
+                    required=True,
+                ),
+                CardFormField(
+                    name="check_times",
+                    label="⏰ 检查时间点（选填，默认 9,12,15）",
+                    placeholder="填小时数，如 9,15 或 9,12,15",
+                ),
+            ],
+            submit_label="✅ 创建监控",
+            submit_action="do_newtask_announcement",
+        ),
+        footer="仅推送重要公告，普通公告不打扰"
     )
 
 
 def announcement_card(symbol: str, name: str, announcements: List[Dict]) -> OutgoingCard:
-    """公告推送卡片"""
+    """公告推送卡片（单股，手动查询用）"""
     if not announcements:
         return OutgoingCard(
             title=f"📢 {name}({symbol}) 暂无重要公告",
@@ -460,16 +493,54 @@ def announcement_card(symbol: str, name: str, announcements: List[Dict]) -> Outg
     )
 
 
+def multi_announcement_card(results: List[Dict]) -> "OutgoingCard":
+    """合并公告推送卡片 — 所有有新公告的股票显示在同一张卡片上
+    results: [{"symbol": str, "name": str, "announcements": List[Dict]}, ...]
+    """
+    from datetime import datetime
+    lines = []
+    for r in results:
+        sym, nm = r["symbol"], r["name"]
+        lines.append(f"**📌 {nm}（{sym}）**")
+        for ann in r["announcements"][:3]:  # 每只最多3条
+            lines.append(f"　• {ann['date']} {ann['title']}")
+            if ann.get("url"):
+                lines.append(f"　　[查看全文]({ann['url']})")
+        lines.append("")
+
+    total = sum(len(r["announcements"]) for r in results)
+    stocks_str = "、".join(r["name"] for r in results)
+    return OutgoingCard(
+        title=f"📢 公告监控 · {datetime.now().strftime('%m/%d')}",
+        content="\n".join(lines).strip(),
+        footer=f"共 {len(results)} 只股票有新公告（{stocks_str}），共 {total} 条 | 每只最多展示3条"
+    )
+
+
+def del_announcement_stock_card(task_id: int, symbols: List[str]) -> "OutgoingCard":
+    """选择要移除的股票 — 每只一个按钮"""
+    buttons = [
+        CardButton(sym, "do_del_announcement_stock", {"task_id": task_id, "symbol": sym})
+        for sym in symbols
+    ]
+    return OutgoingCard(
+        title="➖ 移除监控股票",
+        content=f"当前监控：{'、'.join(symbols)}\n\n点击要移除的股票代码：",
+        buttons=buttons,
+    )
+
+
 def settings_card(cfg_vals: Dict) -> OutgoingCard:
-    """系统设置卡片：早报/晚报推送时间，无需重启即可生效"""
+    """系统设置卡片：早报/晚报推送时间 + 价格预警间隔"""
     digest_h  = cfg_vals.get("digest_h", 15)
     digest_m  = cfg_vals.get("digest_m", 30)
     morning_h = cfg_vals.get("morning_h", 9)
     morning_m = cfg_vals.get("morning_m", 0)
+    alert_min = cfg_vals.get("alert_min", 5)
 
     return OutgoingCard(
-        title="⚙️ 推送时间设置",
-        content="填写 24 小时制，格式 `HH:MM`，留空则不修改",
+        title="⚙️ 推送设置",
+        content="推送时间：24 小时制 `HH:MM`，留空不修改；预警间隔：1~60 分钟整数",
         form=CardForm(
             fields=[
                 CardFormField(
@@ -482,11 +553,16 @@ def settings_card(cfg_vals: Dict) -> OutgoingCard:
                     label="🌙 晚报时间",
                     placeholder=f"当前 {digest_h:02d}:{digest_m:02d}，如 16:00",
                 ),
+                CardFormField(
+                    name="alert_interval",
+                    label="🔔 价格预警检查间隔（分钟）",
+                    placeholder=f"当前 {alert_min} 分钟，如 10",
+                ),
             ],
             submit_label="💾 保存",
             submit_action="save_push_times",
         ),
-        footer="仅修改您自己的推送时间，不影响其他用户"
+        footer="早报/晚报时间仅对您自己生效；预警间隔重启后生效"
     )
 
 
