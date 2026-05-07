@@ -86,6 +86,15 @@ class TaskScheduler:
             self._register_task(task)
             logger.info(f"热注册用户任务 #{task_id}")
 
+    def update_alert_interval(self, minutes: int) -> None:
+        """热更新价格预警检查间隔（无需重启）"""
+        minutes = max(1, minutes)
+        self._scheduler.reschedule_job(
+            "builtin_price_alert",
+            trigger=CronTrigger(minute=f"*/{minutes}")
+        )
+        logger.info(f"价格预警间隔已更新为 {minutes} 分钟")
+
     # ── 内置任务 ──────────────────────────────────────────────────────
 
     def _register_builtin_jobs(self) -> None:

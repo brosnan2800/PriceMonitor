@@ -556,13 +556,13 @@ def settings_card(cfg_vals: Dict) -> OutgoingCard:
                 CardFormField(
                     name="alert_interval",
                     label="🔔 价格预警检查间隔（分钟）",
-                    placeholder=f"当前 {alert_min} 分钟，如 10",
+                    placeholder=f"当前 {alert_min} 分钟（建议 5~15，防止数据源限流）",
                 ),
             ],
             submit_label="💾 保存",
             submit_action="save_push_times",
         ),
-        footer="早报/晚报时间仅对您自己生效；预警间隔重启后生效"
+        footer="修改立即生效，无需重启 · 预警仅在 A 股交易时段（工作日 9:30~11:30 / 13:00~15:00）运行"
     )
 
 

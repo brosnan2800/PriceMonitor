@@ -822,7 +822,7 @@ class CommandHandler:
         digest_time    = (data.get("digest_time") or "").strip()
         alert_interval = (data.get("alert_interval") or "").strip()
 
-        # 处理预警间隔（写 config.py/env，需重启）
+        # 处理预警间隔：写 config + 热更新 scheduler（立即生效，无需重启）
         if alert_interval:
             try:
                 minutes = int(alert_interval)
@@ -831,15 +831,40 @@ class CommandHandler:
                 import config_loader as cfg
                 cfg_path = getattr(getattr(cfg, "_cfg", None), "__file__", None)
                 _update_config_value(cfg_path, "PRICE_ALERT_INTERVAL_MINUTES", minutes)
+                # 热更新调度间隔，立即生效
+                from bot.scheduler import TaskScheduler
+                scheduler = TaskScheduler.get_instance()
+                if scheduler:
+                    scheduler.update_alert_interval(minutes)
+                # 估算每日 API 调用次数（交易时段约 4 小时 = 240 分钟）
+                import data.db as db_mod
+                alert_count = len(db_mod.get_all_alerts())
+                calls_per_day = (240 // minutes) * alert_count
+                warn = ""
+                if minutes < 5:
+                    warn = f"\n⚠️ 间隔 {minutes} 分钟较短，预计每日调用 ~{calls_per_day} 次，可能触发数据源限流，建议 ≥5 分钟"
+                elif calls_per_day > 200:
+                    warn = f"\n⚠️ 当前共 {alert_count} 条预警，每日预计调用 ~{calls_per_day} 次，若遇限流请适当增大间隔"
             except ValueError:
                 self.adapter.send_text(msg.user_id, "❌ 预警间隔需为 1~60 的整数")
                 return
+        else:
+            warn = ""
 
-        _save_user_push_time(
-            self.adapter, msg.user_id,
-            morning_time=morning_time or None,
-            digest_time=digest_time or None,
-        )
+        if morning_time or digest_time:
+            _save_user_push_time(
+                self.adapter, msg.user_id,
+                morning_time=morning_time or None,
+                digest_time=digest_time or None,
+            )
+        elif alert_interval:
+            # 只改了预警间隔，没改推送时间，单独回复成功
+            self.adapter.send_success(
+                msg.user_id,
+                f"✅ 价格预警间隔已更新为 **{minutes} 分钟**，立即生效！{warn}"
+            )
+        else:
+            self.adapter.send_error(msg.user_id, "请至少填写一项设置")
 
     def _cmd_macro(self, msg: "IncomingMessage") -> None:
         """手动查询美国宏观指标（CPI/失业率/联邦利率/国债）"""
