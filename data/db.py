@@ -182,6 +182,16 @@ def get_alerts(user_id: str, enabled_only: bool = True) -> List[Dict]:
         return [dict(r) for r in rows]
 
 
+def get_all_alerts(enabled_only: bool = True) -> List[Dict]:
+    """获取所有用户的价格预警（供调度器全局扫描）"""
+    with _conn() as conn:
+        sql = "SELECT * FROM alerts"
+        if enabled_only:
+            sql += " WHERE enabled = 1"
+        rows = conn.execute(sql).fetchall()
+        return [dict(r) for r in rows]
+
+
 def set_alert_cooldown(alert_id: int, until: str) -> None:
     with _conn() as conn:
         conn.execute(

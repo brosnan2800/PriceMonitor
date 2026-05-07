@@ -444,7 +444,22 @@ class CommandHandler:
             if results and len(results) == 1:
                 resolved_symbol = results[0].get("code", keyword.upper())
                 resolved_name = results[0].get("name", keyword)
-            elif not results:
+            elif results and len(results) > 1:
+                lines = "\n".join(f"  `{r['code']}`  {r['name']}" for r in results[:5])
+                self.adapter.send_error(
+                    msg.user_id,
+                    f"找到多个匹配结果，请输入精确的股票代码：\n{lines}"
+                )
+                return
+            else:
+                # 搜不到：如果输入本身不是纯数字代码，直接拒绝
+                if not keyword.strip().isdigit():
+                    self.adapter.send_error(
+                        msg.user_id,
+                        f"未找到股票「{keyword}」，请输入正确的股票代码（如 000333）"
+                    )
+                    return
+                # 纯数字代码直接使用
                 resolved_symbol = keyword.upper()
                 resolved_name = keyword
 

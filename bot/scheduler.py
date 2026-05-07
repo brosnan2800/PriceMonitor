@@ -321,16 +321,70 @@ class TaskScheduler:
             except Exception as e:
                 logger.error(f"早报推送失败 {uid}: {e}")
 
+    @staticmethod
+    def _is_trading_time() -> bool:
+        """判断当前是否在 A 股交易时段（工作日 9:25-11:35 / 12:55-15:05，含缓冲）"""
+        now = datetime.now()
+        if now.weekday() >= 5:  # 周六/周日
+            return False
+        t = now.hour * 60 + now.minute
+        return (9 * 60 + 25 <= t <= 11 * 60 + 35) or (12 * 60 + 55 <= t <= 15 * 60 + 5)
+
     def _job_check_price_alerts(self) -> None:
-        """检查所有用户价格预警"""
-        tasks = db.get_all_enabled_tasks()
-        for task in tasks:
-            if task.get("task_type") == "price_alert":
-                try:
-                    job_fn = self._make_price_alert_job(task)
-                    job_fn()
-                except Exception as e:
-                    logger.error(f"预警检查失败 task#{task['id']}: {e}")
+        """检查所有用户价格预警（仅在 A 股交易时段运行）"""
+        if not self._is_trading_time():
+            return
+
+        all_alerts = db.get_all_alerts()
+        for alert in all_alerts:
+            try:
+                self._check_single_alert(alert)
+            except Exception as e:
+                logger.error(f"预警检查失败 alert#{alert['id']}: {e}")
+
+    def _check_single_alert(self, alert: Dict) -> None:
+        """检查并触发单条价格预警"""
+        user_id = alert["user_id"]
+        symbol = alert["symbol"]
+        condition = alert["condition"]
+        threshold = float(alert["threshold"])
+
+        platform = self._get_user_platform(user_id)
+        adapter = self.adapters.get(platform)
+        if not adapter or not symbol:
+            return
+
+        data = auto_quote(symbol)
+        if not data:
+            return
+
+        price = data.get("price", 0)
+        change_pct = data.get("change_pct", 0)
+        name = data.get("name", symbol)
+
+        triggered = False
+        msg = ""
+        if condition == "above" and price > threshold:
+            triggered = True
+            msg = f"🚨 {name}({symbol}) 价格 {price} 已突破 {threshold}"
+        elif condition == "below" and price < threshold:
+            triggered = True
+            msg = f"🚨 {name}({symbol}) 价格 {price} 已跌破 {threshold}"
+        elif condition == "change_pct":
+            if threshold >= 0 and change_pct >= threshold:
+                triggered = True
+                msg = f"🚨 {name}({symbol}) 上涨 {change_pct:.2f}%，超过阈值 {threshold}%"
+            elif threshold < 0 and change_pct <= threshold:
+                triggered = True
+                msg = f"🚨 {name}({symbol}) 下跌 {abs(change_pct):.2f}%，超过阈值 {abs(threshold)}%"
+
+        if triggered:
+            content_hash = hashlib.md5(
+                f"{symbol}{condition}{threshold}{datetime.now().strftime('%Y%m%d%H')}".encode()
+            ).hexdigest()
+            if not db.already_pushed(user_id, content_hash, within_hours=2):
+                adapter.send_text(user_id, msg)
+                db.log_push(user_id, alert["id"], content_hash)
 
     # ── 推送内容构建 ──────────────────────────────────────────────────
 
