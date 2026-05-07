@@ -766,11 +766,14 @@ class CommandHandler:
         alert_id = int(data.get("alert_id", 0))
         if not alert_id:
             return
-        db.set_alert_triggered(alert_id)
-        self.adapter.send_success(
-            msg.user_id,
-            "✅ 已暂停该预警，等价格回归正常区间后将自动恢复提醒"
-        )
+        ok = db.set_alert_triggered(alert_id, msg.user_id)
+        if ok:
+            self.adapter.send_success(
+                msg.user_id,
+                "✅ 已暂停该预警，等价格回归正常区间后将自动恢复提醒"
+            )
+        else:
+            self.adapter.send_error(msg.user_id, f"未找到预警 #{alert_id}")
 
 
     # ── 任务卡片内联操作（暂停/删除）────────────────────────────────

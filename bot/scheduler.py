@@ -392,21 +392,21 @@ class TaskScheduler:
             if in_trigger:
                 # 已触发状态：检查是否已回归正常区间
                 if not meets_condition:
-                    db.reset_alert_triggered(alert["id"])
+                    db.reset_alert_triggered(alert["id"], user_id)
                     logger.debug(f"预警 #{alert['id']} {symbol} 已回归正常，重置触发状态")
                 return  # 无论是否恢复，本轮都不推
             # 未触发：正常判断
             if not meets_condition:
                 return
             # 触发：推送并标记
-            msg, card = self._build_alert_message(name, symbol, condition, threshold, price, change_pct, alert["id"])
+            msg, card = self._build_alert_message(name, symbol, condition, threshold, price, change_pct, alert["id"], show_ack=True)
             adapter.send_card(user_id, card)
-            db.set_alert_triggered(alert["id"])
+            db.set_alert_triggered(alert["id"], user_id)
         else:
-            # 旧逻辑：时间冷却（每小时最多一次）
+            # 旧逻辑：时间冷却（每小时最多一次），不显示「知道了」按钮
             if not meets_condition:
                 return
-            msg, card = self._build_alert_message(name, symbol, condition, threshold, price, change_pct, alert["id"])
+            msg, card = self._build_alert_message(name, symbol, condition, threshold, price, change_pct, alert["id"], show_ack=False)
             content_hash = hashlib.md5(
                 f"{symbol}{condition}{threshold}{datetime.now().strftime('%Y%m%d%H')}".encode()
             ).hexdigest()
@@ -417,8 +417,8 @@ class TaskScheduler:
     @staticmethod
     def _build_alert_message(name: str, symbol: str, condition: str,
                               threshold: float, price: float, change_pct: float,
-                              alert_id: int):
-        """构建预警推送卡片（含「知道了」按钮）"""
+                              alert_id: int, show_ack: bool = True):
+        """构建预警推送卡片，show_ack=True 时含「知道了」按钮"""
         from bot.formatters.cards import OutgoingCard, CardButton
         cond_map = {"above": f"突破 {threshold}", "below": f"跌破 {threshold}",
                     "change_pct": f"涨跌幅达 {change_pct:.2f}%"}
@@ -429,13 +429,16 @@ class TaskScheduler:
             price_str = f"当前价格 **{price}**"
         content = f"{price_str}，触发预设条件：{cond_str}"
         msg = f"🚨 {name}({symbol}) {cond_str}"
+        buttons = []
+        footer = None
+        if show_ack:
+            buttons = [CardButton("✅ 知道了，暂停提醒", "ack_alert", {"alert_id": alert_id})]
+            footer = "点击「知道了」后，等价格回归正常区间才会再次提醒"
         card = OutgoingCard(
             title=f"🚨 价格预警触发：{name}（{symbol}）",
             content=content,
-            buttons=[
-                CardButton("✅ 知道了，暂停提醒", "ack_alert", {"alert_id": alert_id}),
-            ],
-            footer="点击「知道了」后，等价格回归正常区间才会再次提醒"
+            buttons=buttons,
+            footer=footer,
         )
         return msg, card
 

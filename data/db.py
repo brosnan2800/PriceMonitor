@@ -90,9 +90,15 @@ def _conn():
 
 
 def init_db():
-    """初始化数据库，建表"""
+    """初始化数据库，建表（含存量 DB 字段迁移）"""
     with _conn() as conn:
         conn.executescript(SCHEMA)
+        # 存量 DB 迁移：alerts 表加 in_trigger 列
+        try:
+            conn.execute("SELECT in_trigger FROM alerts LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute("ALTER TABLE alerts ADD COLUMN in_trigger INTEGER DEFAULT 0")
+            logger.info("DB migration: added in_trigger column to alerts")
     logger.info(f"数据库初始化完成: {DB_PATH}")
 
 
@@ -215,19 +221,23 @@ def toggle_alert(alert_id: int, enabled: bool) -> None:
         conn.execute("UPDATE alerts SET enabled = ? WHERE id = ?", (int(enabled), alert_id))
 
 
-def set_alert_triggered(alert_id: int) -> None:
-    """标记预警为触发状态（等待价格回归正常才能再次触发）"""
+def set_alert_triggered(alert_id: int, user_id: str) -> bool:
+    """标记预警为触发状态（等待价格回归正常才能再次触发）。返回 False 表示无权限或不存在。"""
     with _conn() as conn:
-        conn.execute(
-            "UPDATE alerts SET in_trigger = 1, triggered_count = triggered_count + 1 WHERE id = ?",
-            (alert_id,)
+        cur = conn.execute(
+            "UPDATE alerts SET in_trigger = 1, triggered_count = triggered_count + 1 WHERE id = ? AND user_id = ?",
+            (alert_id, user_id)
         )
+        return cur.rowcount > 0
 
 
-def reset_alert_triggered(alert_id: int) -> None:
+def reset_alert_triggered(alert_id: int, user_id: str = "") -> None:
     """价格恢复正常区间后重置触发状态（允许下次再触发）"""
     with _conn() as conn:
-        conn.execute("UPDATE alerts SET in_trigger = 0 WHERE id = ?", (alert_id,))
+        if user_id:
+            conn.execute("UPDATE alerts SET in_trigger = 0 WHERE id = ? AND user_id = ?", (alert_id, user_id))
+        else:
+            conn.execute("UPDATE alerts SET in_trigger = 0 WHERE id = ?", (alert_id,))
 
 
 # ── Tasks ─────────────────────────────────────────────────────────────
