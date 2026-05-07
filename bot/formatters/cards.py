@@ -394,8 +394,12 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
             cond = cond_map.get(a["condition"], a["condition"])
             lines.append(f"{status} #{a['id']} **{a['symbol']}** {cond} {a['threshold']}")
         sections.append("\n".join(lines))
+        alert_buttons: List[CardButton] = [
+            CardButton("➖ 删除预警", "del_alert_select", {}, style="danger"),
+        ]
     else:
         sections.append("\n**🔔 价格预警**\n暂无价格预警")
+        alert_buttons = []
 
     return OutgoingCard(
         title="⏰ 我的定制任务",
@@ -403,6 +407,7 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
         buttons=[
             CardButton("新建定制 ➕", "go_newtask", {}, style="primary"),
             *task_buttons,
+            *alert_buttons,
         ]
     )
 
@@ -514,6 +519,24 @@ def multi_announcement_card(results: List[Dict]) -> "OutgoingCard":
         title=f"📢 公告监控 · {datetime.now().strftime('%m/%d')}",
         content="\n".join(lines).strip(),
         footer=f"共 {len(results)} 只股票有新公告（{stocks_str}），共 {total} 条 | 每只最多展示3条"
+    )
+
+
+def del_alert_card(alerts: List[Dict]) -> "OutgoingCard":
+    """选择要删除的价格预警 — 每条预警一个按钮"""
+    cond_map = {"above": "高于", "below": "低于", "change_pct": "涨跌幅超"}
+    buttons = [
+        CardButton(
+            f"#{a['id']} {a['symbol']} {cond_map.get(a['condition'], a['condition'])} {a['threshold']}",
+            "do_del_alert",
+            {"alert_id": a["id"]}
+        )
+        for a in alerts
+    ]
+    return OutgoingCard(
+        title="➖ 删除价格预警",
+        content="点击要删除的预警条目：",
+        buttons=buttons,
     )
 
 

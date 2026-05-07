@@ -192,6 +192,15 @@ def get_all_alerts(enabled_only: bool = True) -> List[Dict]:
         return [dict(r) for r in rows]
 
 
+def delete_alert(alert_id: int, user_id: str) -> bool:
+    """删除指定预警，校验 user_id 防止越权"""
+    with _conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM alerts WHERE id = ? AND user_id = ?", (alert_id, user_id)
+        )
+        return cur.rowcount > 0
+
+
 def set_alert_cooldown(alert_id: int, until: str) -> None:
     with _conn() as conn:
         conn.execute(

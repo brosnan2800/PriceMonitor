@@ -390,6 +390,8 @@ class CommandHandler:
             "del_task_btn":         lambda: self._del_task_btn(msg, data),
             "del_announcement_stock":    lambda: self._del_announcement_stock(msg, data),
             "do_del_announcement_stock": lambda: self._do_del_announcement_stock(msg, data),
+            "del_alert_select":          lambda: self._del_alert_select(msg, data),
+            "do_del_alert":              lambda: self._do_del_alert(msg, data),
         }
 
         handler = routing.get(action)
@@ -735,6 +737,27 @@ class CommandHandler:
             db.delete_task(task_id)
             self.adapter.send_success(msg.user_id, f"✅ 已移除 {symbol}，监控列表为空，任务已自动删除")
         self._refresh_tasks_card(msg)
+
+    def _del_alert_select(self, msg: "IncomingMessage", data: Dict) -> None:
+        """展示删除预警的选择列表"""
+        from bot.formatters.cards import del_alert_card
+        alerts = db.get_alerts(msg.user_id, enabled_only=False)
+        if not alerts:
+            self.adapter.send_text(msg.user_id, "ℹ️ 暂无价格预警")
+            return
+        self.adapter.send_card(msg.user_id, del_alert_card(alerts))
+
+    def _do_del_alert(self, msg: "IncomingMessage", data: Dict) -> None:
+        """执行删除单条价格预警"""
+        alert_id = int(data.get("alert_id", 0))
+        if not alert_id:
+            return
+        ok = db.delete_alert(alert_id, msg.user_id)
+        if ok:
+            self.adapter.send_success(msg.user_id, f"✅ 已删除预警 #{alert_id}")
+            self._refresh_tasks_card(msg)
+        else:
+            self.adapter.send_error(msg.user_id, f"未找到预警 #{alert_id}")
 
 
     # ── 任务卡片内联操作（暂停/删除）────────────────────────────────
