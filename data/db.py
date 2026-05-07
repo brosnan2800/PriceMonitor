@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS alerts (
     enabled         INTEGER DEFAULT 1,
     cooldown_until  TEXT,                  -- 冷却到期时间，期间不重复推送
     triggered_count INTEGER DEFAULT 0,
+    in_trigger      INTEGER DEFAULT 0,     -- 1=当前处于触发状态，等待价格回归正常区间
     created_at      TEXT DEFAULT (datetime('now','localtime'))
 );
 
@@ -212,6 +213,21 @@ def set_alert_cooldown(alert_id: int, until: str) -> None:
 def toggle_alert(alert_id: int, enabled: bool) -> None:
     with _conn() as conn:
         conn.execute("UPDATE alerts SET enabled = ? WHERE id = ?", (int(enabled), alert_id))
+
+
+def set_alert_triggered(alert_id: int) -> None:
+    """标记预警为触发状态（等待价格回归正常才能再次触发）"""
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE alerts SET in_trigger = 1, triggered_count = triggered_count + 1 WHERE id = ?",
+            (alert_id,)
+        )
+
+
+def reset_alert_triggered(alert_id: int) -> None:
+    """价格恢复正常区间后重置触发状态（允许下次再触发）"""
+    with _conn() as conn:
+        conn.execute("UPDATE alerts SET in_trigger = 0 WHERE id = ?", (alert_id,))
 
 
 # ── Tasks ─────────────────────────────────────────────────────────────

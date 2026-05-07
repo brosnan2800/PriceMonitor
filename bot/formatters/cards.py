@@ -554,12 +554,16 @@ def del_announcement_stock_card(task_id: int, symbols: List[str]) -> "OutgoingCa
 
 
 def settings_card(cfg_vals: Dict) -> OutgoingCard:
-    """系统设置卡片：早报/晚报推送时间 + 价格预警间隔"""
+    """系统设置卡片：早报/晚报推送时间 + 价格预警间隔 + 触发后暂停开关"""
     digest_h  = cfg_vals.get("digest_h", 15)
     digest_m  = cfg_vals.get("digest_m", 30)
     morning_h = cfg_vals.get("morning_h", 9)
     morning_m = cfg_vals.get("morning_m", 0)
     alert_min = cfg_vals.get("alert_min", 5)
+    pause_on  = cfg_vals.get("alert_pause_until_normal", True)
+
+    pause_label = ("✅ 触发后暂停：开启（点击关闭）" if pause_on
+                   else "⬜ 触发后暂停：关闭（点击开启）")
 
     return OutgoingCard(
         title="⚙️ 推送设置",
@@ -585,6 +589,9 @@ def settings_card(cfg_vals: Dict) -> OutgoingCard:
             submit_label="💾 保存",
             submit_action="save_push_times",
         ),
+        buttons=[
+            CardButton(pause_label, "toggle_alert_pause", {}, style="primary" if pause_on else "default"),
+        ],
         footer="修改立即生效，无需重启 · 预警仅在 A 股交易时段（工作日 9:30~11:30 / 13:00~15:00）运行"
     )
 

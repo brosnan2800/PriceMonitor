@@ -386,12 +386,14 @@ class CommandHandler:
             "toggle_morning_module": lambda: self._toggle_morning_module(msg, data),
             "save_morning_modules": lambda: self._save_morning_modules(msg, data),
             "save_push_times":      lambda: self._save_push_times_callback(msg, data),
+            "toggle_alert_pause":   lambda: self._toggle_alert_pause(msg, data),
             "toggle_task_btn":      lambda: self._toggle_task_btn(msg, data),
             "del_task_btn":         lambda: self._del_task_btn(msg, data),
             "del_announcement_stock":    lambda: self._del_announcement_stock(msg, data),
             "do_del_announcement_stock": lambda: self._do_del_announcement_stock(msg, data),
             "del_alert_select":          lambda: self._del_alert_select(msg, data),
             "do_del_alert":              lambda: self._do_del_alert(msg, data),
+            "ack_alert":                 lambda: self._ack_alert(msg, data),
         }
 
         handler = routing.get(action)
@@ -759,6 +761,17 @@ class CommandHandler:
         else:
             self.adapter.send_error(msg.user_id, f"未找到预警 #{alert_id}")
 
+    def _ack_alert(self, msg: "IncomingMessage", data: Dict) -> None:
+        """用户点击「知道了」，将预警标记为触发状态，等价格恢复后再重推"""
+        alert_id = int(data.get("alert_id", 0))
+        if not alert_id:
+            return
+        db.set_alert_triggered(alert_id)
+        self.adapter.send_success(
+            msg.user_id,
+            "✅ 已暂停该预警，等价格回归正常区间后将自动恢复提醒"
+        )
+
 
     # ── 任务卡片内联操作（暂停/删除）────────────────────────────────
 
@@ -889,6 +902,21 @@ class CommandHandler:
         else:
             self.adapter.send_error(msg.user_id, "请至少填写一项设置")
 
+    def _toggle_alert_pause(self, msg: "IncomingMessage", data: Dict) -> None:
+        """切换「触发后暂停直到恢复正常区间」开关"""
+        import data.db as db_mod
+        settings = db_mod.get_user_settings(msg.user_id)
+        current = settings.get("alert_pause_until_normal", True)
+        new_val = not current
+        db_mod.update_user_settings(msg.user_id, {"alert_pause_until_normal": new_val})
+        state_str = "**开启**（触发后等待价格回归正常区间再提醒）" if new_val else "**关闭**（基于时间冷却，每小时最多提醒一次）"
+        self.adapter.send_success(
+            msg.user_id,
+            f"✅ 触发后暂停已切换为 {state_str}"
+        )
+
+
+
     def _cmd_macro(self, msg: "IncomingMessage") -> None:
         """手动查询美国宏观指标（CPI/失业率/联邦利率/国债）"""
         import threading
@@ -980,6 +1008,7 @@ class CommandHandler:
                 "digest_m":  digest_m,
                 "morning_h": morning_h,
                 "morning_m": morning_m,
+                "alert_pause_until_normal": user_settings.get("alert_pause_until_normal", True),
             }
             self.adapter.send_card(msg.user_id, settings_card(vals))
             return

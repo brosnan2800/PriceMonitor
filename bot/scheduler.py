@@ -357,6 +357,7 @@ class TaskScheduler:
         symbol = alert["symbol"]
         condition = alert["condition"]
         threshold = float(alert["threshold"])
+        in_trigger = bool(alert.get("in_trigger", 0))
 
         platform = self._get_user_platform(user_id)
         adapter = self.adapters.get(platform)
@@ -371,29 +372,72 @@ class TaskScheduler:
         change_pct = data.get("change_pct", 0)
         name = data.get("name", symbol)
 
-        triggered = False
-        msg = ""
-        if condition == "above" and price > threshold:
-            triggered = True
-            msg = f"🚨 {name}({symbol}) 价格 {price} 已突破 {threshold}"
-        elif condition == "below" and price < threshold:
-            triggered = True
-            msg = f"🚨 {name}({symbol}) 价格 {price} 已跌破 {threshold}"
+        # 判断当前是否满足触发条件
+        meets_condition = False
+        if condition == "above":
+            meets_condition = price > threshold
+        elif condition == "below":
+            meets_condition = price < threshold
         elif condition == "change_pct":
-            if threshold >= 0 and change_pct >= threshold:
-                triggered = True
-                msg = f"🚨 {name}({symbol}) 上涨 {change_pct:.2f}%，超过阈值 {threshold}%"
-            elif threshold < 0 and change_pct <= threshold:
-                triggered = True
-                msg = f"🚨 {name}({symbol}) 下跌 {abs(change_pct):.2f}%，超过阈值 {abs(threshold)}%"
+            if threshold >= 0:
+                meets_condition = change_pct >= threshold
+            else:
+                meets_condition = change_pct <= threshold
 
-        if triggered:
+        # 用户设置：触发后是否等待恢复再重推
+        settings = db.get_user_settings(user_id)
+        pause_until_normal = settings.get("alert_pause_until_normal", True)
+
+        if pause_until_normal:
+            if in_trigger:
+                # 已触发状态：检查是否已回归正常区间
+                if not meets_condition:
+                    db.reset_alert_triggered(alert["id"])
+                    logger.debug(f"预警 #{alert['id']} {symbol} 已回归正常，重置触发状态")
+                return  # 无论是否恢复，本轮都不推
+            # 未触发：正常判断
+            if not meets_condition:
+                return
+            # 触发：推送并标记
+            msg, card = self._build_alert_message(name, symbol, condition, threshold, price, change_pct, alert["id"])
+            adapter.send_card(user_id, card)
+            db.set_alert_triggered(alert["id"])
+        else:
+            # 旧逻辑：时间冷却（每小时最多一次）
+            if not meets_condition:
+                return
+            msg, card = self._build_alert_message(name, symbol, condition, threshold, price, change_pct, alert["id"])
             content_hash = hashlib.md5(
                 f"{symbol}{condition}{threshold}{datetime.now().strftime('%Y%m%d%H')}".encode()
             ).hexdigest()
             if not db.already_pushed(user_id, content_hash, within_hours=2):
-                adapter.send_text(user_id, msg)
+                adapter.send_card(user_id, card)
                 db.log_push(user_id, alert["id"], content_hash)
+
+    @staticmethod
+    def _build_alert_message(name: str, symbol: str, condition: str,
+                              threshold: float, price: float, change_pct: float,
+                              alert_id: int):
+        """构建预警推送卡片（含「知道了」按钮）"""
+        from bot.formatters.cards import OutgoingCard, CardButton
+        cond_map = {"above": f"突破 {threshold}", "below": f"跌破 {threshold}",
+                    "change_pct": f"涨跌幅达 {change_pct:.2f}%"}
+        cond_str = cond_map.get(condition, "")
+        if condition == "change_pct":
+            price_str = f"当前涨跌幅 **{change_pct:+.2f}%**"
+        else:
+            price_str = f"当前价格 **{price}**"
+        content = f"{price_str}，触发预设条件：{cond_str}"
+        msg = f"🚨 {name}({symbol}) {cond_str}"
+        card = OutgoingCard(
+            title=f"🚨 价格预警触发：{name}（{symbol}）",
+            content=content,
+            buttons=[
+                CardButton("✅ 知道了，暂停提醒", "ack_alert", {"alert_id": alert_id}),
+            ],
+            footer="点击「知道了」后，等价格回归正常区间才会再次提醒"
+        )
+        return msg, card
 
     # ── 推送内容构建 ──────────────────────────────────────────────────
 
