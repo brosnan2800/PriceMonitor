@@ -6,12 +6,23 @@ set -e
 # 检查飞书配置是否完成，未完成则提示用户运行 feishu_setup.py
 # ────────────────────────────────────────────────────────
 
+read_env_file_var() {
+    key="$1"
+    env_path="/app/.env"
+    if [ -f "$env_path" ]; then
+        grep "^${key}=" "$env_path" | tail -n 1 | cut -d= -f2-
+    fi
+}
+
+EFFECTIVE_FEISHU_APP_ID="${FEISHU_APP_ID:-$(read_env_file_var FEISHU_APP_ID)}"
+EFFECTIVE_FEISHU_APP_SECRET="${FEISHU_APP_SECRET:-$(read_env_file_var FEISHU_APP_SECRET)}"
+
 FEISHU_READY=true
 
-if [ -z "$FEISHU_APP_ID" ] || [ "$FEISHU_APP_ID" = "your_feishu_app_id" ]; then
+if [ -z "$EFFECTIVE_FEISHU_APP_ID" ] || [ "$EFFECTIVE_FEISHU_APP_ID" = "your_feishu_app_id" ]; then
     FEISHU_READY=false
 fi
-if [ -z "$FEISHU_APP_SECRET" ] || [ "$FEISHU_APP_SECRET" = "your_feishu_app_secret" ]; then
+if [ -z "$EFFECTIVE_FEISHU_APP_SECRET" ] || [ "$EFFECTIVE_FEISHU_APP_SECRET" = "your_feishu_app_secret" ]; then
     FEISHU_READY=false
 fi
 
