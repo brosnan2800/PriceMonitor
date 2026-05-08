@@ -786,8 +786,12 @@ def search_stock(keyword: str) -> List[Dict]:
             code = str(item.get("Code", "") or "")
             name = str(item.get("Name", "") or "")
             sec_type = str(item.get("SecurityTypeName", "") or "")
-            # 只保留 A 股
-            if code.isdigit() and len(code) == 6 and ("A" in sec_type or not sec_type):
+            classify = str(item.get("Classify", "") or "")
+            # A股：6位数字代码
+            is_a_stock = code.isdigit() and len(code) == 6
+            # 美股：字母代码（排除板块BK、基金衍生产品等，只保留普通股票）
+            is_us_stock = classify == "UsStock" and code.isalpha() and len(code) <= 5
+            if is_a_stock or is_us_stock:
                 results.append({"symbol": code, "name": name})
         if results:
             return results[:5]
