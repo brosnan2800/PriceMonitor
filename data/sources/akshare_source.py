@@ -769,6 +769,7 @@ def search_stock(keyword: str) -> List[Dict]:
     方案D：AKShare 全市场快照扫描
     """
     # ── 方案A：东方财富搜索接口 ──
+    _eastmoney_ok = False
     try:
         url = (
             "https://searchapi.eastmoney.com/api/suggest/get"
@@ -777,7 +778,9 @@ def search_stock(keyword: str) -> List[Dict]:
         )
         resp = requests.get(url, timeout=5)
         data = resp.json()
-        items = data.get("QuotationCodeTable", {}).get("Data", [])
+        # 接口调用成功（不管有没有数据）
+        _eastmoney_ok = resp.status_code == 200 and "QuotationCodeTable" in data
+        items = data.get("QuotationCodeTable", {}).get("Data") or []
         results = []
         for item in items:
             code = str(item.get("Code", "") or "")
@@ -788,6 +791,10 @@ def search_stock(keyword: str) -> List[Dict]:
                 results.append({"symbol": code, "name": name})
         if results:
             return results[:5]
+        # 方案A接口正常但0结果 → 该名称不存在，直接返回空，不再走慢速兜底
+        if _eastmoney_ok:
+            logger.debug(f"东方财富搜索 '{keyword}' 无结果，跳过兜底扫描")
+            return []
     except Exception as e:
         logger.debug(f"东方财富搜索失败: {e}")
 
