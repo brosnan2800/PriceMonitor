@@ -591,7 +591,7 @@ def settings_card(cfg_vals: Dict) -> OutgoingCard:
         buttons=[
             CardButton(pause_label, "toggle_alert_pause", {})
         ],
-        footer=f"早报/晚报时间修改立即生效；预警间隔修改立即生效；价格预警仅在交易时段（9:30~11:30 / 13:00~15:00）运行"
+        footer=f"早报/晚报时间修改立即生效；预警间隔修改立即生效；价格预警仅在交易时段（9:25~11:35 / 12:55~15:05）运行"
     )
 
 

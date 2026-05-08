@@ -868,6 +868,9 @@ class CommandHandler:
         digest_time    = (data.get("digest_time") or "").strip()
         alert_interval = (data.get("alert_interval") or "").strip()
 
+        minutes = 0
+        warn = ""
+
         # 处理预警间隔（热更新 scheduler，同时写入 config/env 持久化）
         if alert_interval:
             try:
@@ -883,9 +886,8 @@ class CommandHandler:
                 scheduler = TaskScheduler.get_instance()
                 if scheduler:
                     scheduler.update_alert_interval(minutes)
-                # 频率警告
-                daily_calls = (8 * 60 // minutes)  # 按6.5小时交易时段估算
-                warn = ""
+                # 频率警告（A股交易时段约4小时）
+                daily_calls = (4 * 60 // minutes)
                 if minutes < 5:
                     warn = f"\n⚠️ 间隔较短（{minutes}分钟），每交易日约调用 {daily_calls} 次，可能触发数据源限流"
                 elif daily_calls > 200:
@@ -902,10 +904,9 @@ class CommandHandler:
             )
         elif alert_interval:
             # 只改了间隔，也要给出成功提示
-            warn_msg = locals().get("warn", "")
             self.adapter.send_success(
                 msg.user_id,
-                f"✅ 预警间隔已更新为 {minutes} 分钟，**立即生效**。{warn_msg}"
+                f"✅ 预警间隔已更新为 {minutes} 分钟，**立即生效**。{warn}"
             )
 
     def _cmd_macro(self, msg: "IncomingMessage") -> None:
