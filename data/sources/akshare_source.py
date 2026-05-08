@@ -802,11 +802,22 @@ def search_stock(keyword: str) -> List[Dict]:
     except Exception as e:
         logger.debug(f"东方财富搜索失败: {e}")
 
-    # ── 方案B：同花顺股票搜索 ──
+    # ── 方案B：同花顺股票搜索（A股备用，超时5s）──
     ak = _lazy_akshare()
     if ak:
         try:
-            df = ak.stock_search_detail_ths(symbol=keyword)
+            import signal
+
+            def _timeout_handler(signum, frame):
+                raise TimeoutError("同花顺搜索超时")
+
+            signal.signal(signal.SIGALRM, _timeout_handler)
+            signal.alarm(5)
+            try:
+                df = ak.stock_search_detail_ths(symbol=keyword)
+            finally:
+                signal.alarm(0)
+
             if df is not None and not df.empty:
                 results = []
                 for _, r in df.head(5).iterrows():
@@ -853,14 +864,8 @@ def search_stock(keyword: str) -> List[Dict]:
             except Exception:
                 pass
 
-    # ── 方案D：AKShare 全市场快照扫描 ──
-    if ak:
-        try:
-            df = ak.stock_zh_a_spot_em()
-            mask = df["名称"].str.contains(keyword, na=False)
-            rows = df[mask].head(5)
-            return [{"symbol": str(r["代码"]), "name": str(r["名称"])} for _, r in rows.iterrows()]
-        except Exception as e:
-            logger.debug(f"全市场搜索失败: {e}")
+    # ── 方案D：AKShare 全市场快照扫描（交互式禁用，太慢）──
+    # stock_zh_a_spot_em() 下载全市场 5000+ 条数据约需 2-3 分钟，不适合实时交互
+    # 仅保留作为注释说明，如需离线批量场景可手动调用
 
     return []
