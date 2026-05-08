@@ -6,8 +6,8 @@
 
 # ── 飞书配置（必填） ────────────────────────────────────────────────
 # 运行 python3 feishu_setup.py 扫码自动填写以下三项
-FEISHU_APP_ID = "your_feishu_app_id"
-FEISHU_APP_SECRET = "your_feishu_app_secret"
+FEISHU_APP_ID = ""
+FEISHU_APP_SECRET = ""
 FEISHU_OPEN_ID = ""   # 私聊推送，由 feishu_setup.py 自动获取
 FEISHU_CHAT_ID = ""   # 群聊 ID，可选
 
