@@ -151,8 +151,10 @@ class CommandHandler:
         symbol = keyword.upper()
         self.adapter.send_text(user_id, f"🔍 正在查询 {keyword}...")
 
-        # 非数字且非已知加密/指数代码 → 先名称搜索，避免用名字当代码查询产生误报
-        if not symbol.isdigit() and symbol not in _SKIP_SEARCH:
+        # 纯字母1-5位 = 美股代码格式（AAPL/TSLA/NVDA），直接查不搜索
+        _is_us_code = symbol.isalpha() and 1 <= len(symbol) <= 5
+        # 非数字且非已知加密/指数/美股代码 → 先名称搜索，避免用名字当代码查询产生误报
+        if not symbol.isdigit() and symbol not in _SKIP_SEARCH and not _is_us_code:
             matches = search_stock(keyword)
             if len(matches) == 1:
                 data = auto_quote(matches[0]["symbol"])
@@ -163,7 +165,6 @@ class CommandHandler:
                 self.adapter.send_text(user_id, "\n".join(lines))
                 return
             else:
-                # 搜索无结果，最后尝试直接查（如英文股票代码 AAPL）
                 data = auto_quote(symbol)
         else:
             data = auto_quote(symbol)
@@ -206,8 +207,10 @@ class CommandHandler:
         symbol = keyword.upper()
         self.adapter.send_text(user_id, f"🔍 正在查询 {keyword}...")
 
-        # 非数字且非已知加密/指数代码 → 先名称搜索，避免用名字当代码查询产生误报
-        if not symbol.isdigit() and symbol not in _SKIP_SEARCH:
+        # 纯字母1-5位 = 美股代码格式（AAPL/TSLA/NVDA），直接查不搜索
+        _is_us_code = symbol.isalpha() and 1 <= len(symbol) <= 5
+        # 非数字且非已知加密/指数/美股代码 → 先名称搜索，避免用名字当代码查询产生误报
+        if not symbol.isdigit() and symbol not in _SKIP_SEARCH and not _is_us_code:
             matches = search_stock(keyword)
             if len(matches) == 1:
                 symbol = matches[0]["symbol"]
