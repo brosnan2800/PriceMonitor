@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS alerts (
     enabled         INTEGER DEFAULT 1,
     cooldown_until  TEXT,                  -- 冷却到期时间，期间不重复推送
     triggered_count INTEGER DEFAULT 0,
+    in_trigger      INTEGER DEFAULT 0,     -- 1=已触发暂停，等待价格恢复
     created_at      TEXT DEFAULT (datetime('now','localtime'))
 );
 
@@ -89,9 +90,14 @@ def _conn():
 
 
 def init_db():
-    """初始化数据库，建表"""
+    """初始化数据库，建表；对已有表自动迁移新增列"""
     with _conn() as conn:
         conn.executescript(SCHEMA)
+        # 迁移：为已有 alerts 表补充 in_trigger 列
+        try:
+            conn.execute("ALTER TABLE alerts ADD COLUMN in_trigger INTEGER DEFAULT 0")
+        except Exception:
+            pass  # 列已存在，忽略
     logger.info(f"数据库初始化完成: {DB_PATH}")
 
 
@@ -193,6 +199,39 @@ def set_alert_cooldown(alert_id: int, until: str) -> None:
 def toggle_alert(alert_id: int, enabled: bool) -> None:
     with _conn() as conn:
         conn.execute("UPDATE alerts SET enabled = ? WHERE id = ?", (int(enabled), alert_id))
+
+
+def delete_alert(alert_id: int, user_id: str) -> bool:
+    """删除指定预警（校验归属用户）"""
+    with _conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM alerts WHERE id = ? AND user_id = ?",
+            (alert_id, user_id)
+        )
+        return cur.rowcount > 0
+
+
+def get_all_alerts() -> List[Dict]:
+    """获取所有用户所有启用的预警（供调度器全量轮询）"""
+    with _conn() as conn:
+        rows = conn.execute("SELECT * FROM alerts WHERE enabled = 1").fetchall()
+        return [dict(r) for r in rows]
+
+
+def set_alert_triggered(alert_id: int, user_id: str) -> bool:
+    """标记预警为已触发（校验归属用户），返回是否成功"""
+    with _conn() as conn:
+        cur = conn.execute(
+            "UPDATE alerts SET in_trigger = 1, triggered_count = triggered_count + 1 WHERE id = ? AND user_id = ?",
+            (alert_id, user_id)
+        )
+        return cur.rowcount > 0
+
+
+def reset_alert_triggered(alert_id: int) -> None:
+    """重置预警触发状态（价格恢复正常区间后调用）"""
+    with _conn() as conn:
+        conn.execute("UPDATE alerts SET in_trigger = 0 WHERE id = ?", (alert_id,))
 
 
 # ── Tasks ─────────────────────────────────────────────────────────────

@@ -322,15 +322,116 @@ class TaskScheduler:
                 logger.error(f"早报推送失败 {uid}: {e}")
 
     def _job_check_price_alerts(self) -> None:
-        """检查所有用户价格预警"""
-        tasks = db.get_all_enabled_tasks()
-        for task in tasks:
-            if task.get("task_type") == "price_alert":
-                try:
-                    job_fn = self._make_price_alert_job(task)
-                    job_fn()
-                except Exception as e:
-                    logger.error(f"预警检查失败 task#{task['id']}: {e}")
+        """检查所有用户价格预警（从 alerts 表读取）"""
+        if not self._is_trading_time():
+            return
+        alerts = db.get_all_alerts()
+        for alert in alerts:
+            try:
+                self._check_single_alert(alert)
+            except Exception as e:
+                logger.error(f"预警检查失败 alert#{alert['id']}: {e}")
+
+    @staticmethod
+    def _is_trading_time() -> bool:
+        """判断当前是否在 A 股交易时段（工作日 9:25-11:35 / 12:55-15:05）"""
+        now = datetime.now()
+        if now.weekday() >= 5:  # 周六日
+            return False
+        t = now.hour * 60 + now.minute
+        return (9 * 60 + 25 <= t <= 11 * 60 + 35) or (12 * 60 + 55 <= t <= 15 * 60 + 5)
+
+    def _check_single_alert(self, alert: Dict) -> None:
+        """检查单条预警，支持触发后暂停直到恢复逻辑"""
+        user_id = alert["user_id"]
+        symbol = alert["symbol"]
+        condition = alert["condition"]
+        threshold = float(alert["threshold"])
+        alert_id = alert["id"]
+
+        platform = self._get_user_platform(user_id)
+        adapter = self.adapters.get(platform)
+        if not adapter:
+            return
+
+        data = auto_quote(symbol)
+        if not data:
+            return
+
+        price = data.get("price", 0)
+        change_pct = data.get("change_pct", 0)
+
+        # 判断是否满足触发条件
+        triggered = False
+        msg_text = ""
+        if condition == "above" and price > threshold:
+            triggered = True
+            msg_text = f"🚨 {data.get('name', symbol)} 价格 {price} 已突破 {threshold}"
+        elif condition == "below" and price < threshold:
+            triggered = True
+            msg_text = f"🚨 {data.get('name', symbol)} 价格 {price} 已跌破 {threshold}"
+        elif condition == "change_pct":
+            if threshold >= 0 and change_pct >= threshold:
+                triggered = True
+                msg_text = f"🚨 {data.get('name', symbol)} 上涨 {change_pct:.2f}%，超过阈值 {threshold}%"
+            elif threshold < 0 and change_pct <= threshold:
+                triggered = True
+                msg_text = f"🚨 {data.get('name', symbol)} 下跌 {abs(change_pct):.2f}%，超过阈值 {abs(threshold)}%"
+
+        # 读取用户设置：是否开启「触发后暂停直到恢复」
+        settings = db.get_user_settings(user_id)
+        pause_until_normal = settings.get("alert_pause_until_normal", True)
+        in_trigger = bool(alert.get("in_trigger", 0))
+
+        if pause_until_normal and in_trigger:
+            # 已触发暂停中：检查是否已恢复
+            if not triggered:
+                db.reset_alert_triggered(alert_id)
+            return  # 无论是否恢复，本次均不推送
+
+        if triggered:
+            if pause_until_normal:
+                # 触发后直接暂停，不走冷却逻辑
+                db.set_alert_triggered(alert_id, user_id)
+                self._send_alert_message(adapter, user_id, alert_id, msg_text,
+                                         show_ack=True, pause_until_normal=True)
+            else:
+                # 传统冷却逻辑（每小时最多一次）
+                content_hash = hashlib.md5(
+                    f"{symbol}{condition}{threshold}{datetime.now().strftime('%Y%m%d%H')}".encode()
+                ).hexdigest()
+                if not db.already_pushed(user_id, content_hash, within_hours=2):
+                    self._send_alert_message(adapter, user_id, alert_id, msg_text,
+                                             show_ack=False, pause_until_normal=False)
+                    db.log_push(user_id, alert_id, content_hash)
+
+    def _send_alert_message(self, adapter, user_id: str, alert_id: int,
+                             msg_text: str, show_ack: bool, pause_until_normal: bool) -> None:
+        """推送预警消息，可选附带「✅ 知道了」按钮"""
+        if show_ack:
+            from bot.adapters.base import CardButton, OutgoingCard
+            card = OutgoingCard(
+                title="🚨 价格预警触发",
+                content=msg_text,
+                buttons=[
+                    CardButton("✅ 知道了", "ack_alert", {"alert_id": alert_id})
+                ],
+                footer="点击「知道了」可手动标记此次预警已确认，价格恢复后将自动解除暂停"
+            )
+            adapter.send_card(user_id, card)
+        else:
+            adapter.send_text(user_id, msg_text)
+
+    def update_alert_interval(self, minutes: int) -> None:
+        """热更新价格预警检查间隔（无需重启）"""
+        minutes = max(1, min(60, minutes))
+        self._scheduler.add_job(
+            self._job_check_price_alerts,
+            CronTrigger(minute=f"*/{minutes}"),
+            id="builtin_price_alert",
+            replace_existing=True,
+        )
+        logger.info(f"价格预警间隔已热更新为 {minutes} 分钟")
 
     # ── 推送内容构建 ──────────────────────────────────────────────────
 

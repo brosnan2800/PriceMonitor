@@ -19,7 +19,7 @@ from bot.formatters.cards import (
     announcement_card, settings_card,
     alert_setup_card, alert_input_card,
     morning_modules_card, DEFAULT_MORNING_MODULES, DEFAULT_DAILY_MODULES,
-    del_announcement_stock_card,
+    del_announcement_stock_card, del_alert_card,
 )
 from data import db
 from data.sources.akshare_source import auto_quote, search_stock, _CRYPTO_MAP, _GLOBAL_INDEX_MAP
@@ -390,6 +390,10 @@ class CommandHandler:
             "del_task_btn":         lambda: self._del_task_btn(msg, data),
             "del_announcement_stock":    lambda: self._del_announcement_stock(msg, data),
             "do_del_announcement_stock": lambda: self._do_del_announcement_stock(msg, data),
+            "del_alert":                 lambda: self._del_alert(msg, data),
+            "do_del_alert":              lambda: self._do_del_alert(msg, data),
+            "ack_alert":                 lambda: self._ack_alert(msg, data),
+            "toggle_alert_pause":        lambda: self._toggle_alert_pause(msg, data),
         }
 
         handler = routing.get(action)
@@ -444,9 +448,19 @@ class CommandHandler:
             if results and len(results) == 1:
                 resolved_symbol = results[0].get("code", keyword.upper())
                 resolved_name = results[0].get("name", keyword)
-            elif not results:
-                resolved_symbol = keyword.upper()
-                resolved_name = keyword
+            elif results and len(results) > 1:
+                lines = [f"找到 {len(results)} 个结果，请用精确代码重新设置："]
+                for m in results:
+                    lines.append(f"　`{m['symbol']}`　{m['name']}")
+                self.adapter.send_error(msg.user_id, "\n".join(lines))
+                return
+            elif not keyword.isdigit():
+                # 纯名称搜索无结果且不是数字代码 → 拒绝入库
+                self.adapter.send_error(
+                    msg.user_id,
+                    f"❌ 未找到「{keyword}」对应的股票，请使用股票代码（如 600519）重新设置"
+                )
+                return
 
         # 解析各阈值字段
         def _parse_float(val) -> Optional[float]:
@@ -721,6 +735,53 @@ class CommandHandler:
             self.adapter.send_success(msg.user_id, f"✅ 已移除 {symbol}，监控列表为空，任务已自动删除")
         self._refresh_tasks_card(msg)
 
+    def _del_alert(self, msg: "IncomingMessage", data: Dict) -> None:
+        """显示「删除预警」选择卡片"""
+        alerts = db.get_alerts(msg.user_id)
+        if not alerts:
+            self.adapter.send_text(msg.user_id, "ℹ️ 暂无价格预警")
+            return
+        self.adapter.send_card(msg.user_id, del_alert_card(alerts))
+
+    def _do_del_alert(self, msg: "IncomingMessage", data: Dict) -> None:
+        """执行删除单条预警"""
+        alert_id = int(data.get("alert_id", 0))
+        if not alert_id:
+            return
+        ok = db.delete_alert(alert_id, msg.user_id)
+        if ok:
+            self.adapter.send_success(msg.user_id, f"✅ 预警 #{alert_id} 已删除")
+        else:
+            self.adapter.send_error(msg.user_id, f"未找到预警 #{alert_id} 或无权限删除")
+        self._refresh_tasks_card(msg)
+
+    def _ack_alert(self, msg: "IncomingMessage", data: Dict) -> None:
+        """用户点「✅ 知道了」，手动将预警置为已触发暂停"""
+        alert_id = int(data.get("alert_id", 0))
+        if not alert_id:
+            return
+        ok = db.set_alert_triggered(alert_id, msg.user_id)
+        if ok:
+            self.adapter.send_success(msg.user_id, "✅ 已确认，该预警暂停推送，价格恢复后自动解除")
+        else:
+            self.adapter.send_error(msg.user_id, "操作失败，请稍后重试")
+
+    def _toggle_alert_pause(self, msg: "IncomingMessage", data: Dict) -> None:
+        """切换「触发后暂停直到恢复」开关"""
+        settings = db.get_user_settings(msg.user_id)
+        current = settings.get("alert_pause_until_normal", True)
+        settings["alert_pause_until_normal"] = not current
+        db.update_user_settings(msg.user_id, settings)
+        state_str = "✅ 开启" if settings["alert_pause_until_normal"] else "⬜ 关闭"
+        self.adapter.send_success(
+            msg.user_id,
+            f"触发后暂停直到恢复：{state_str}\n\n"
+            + ("开启后，预警触发一次即暂停，价格恢复正常后自动解除。" if settings["alert_pause_until_normal"]
+               else "关闭后，每小时最多推送一次（传统冷却模式）。")
+        )
+        # 刷新 settings 卡片
+        self._cmd_settings(msg)
+
 
     # ── 任务卡片内联操作（暂停/删除）────────────────────────────────
 
@@ -807,24 +868,45 @@ class CommandHandler:
         digest_time    = (data.get("digest_time") or "").strip()
         alert_interval = (data.get("alert_interval") or "").strip()
 
-        # 处理预警间隔（写 config.py/env，需重启）
+        # 处理预警间隔（热更新 scheduler，同时写入 config/env 持久化）
         if alert_interval:
             try:
                 minutes = int(alert_interval)
                 if not (1 <= minutes <= 60):
                     raise ValueError
+                # 持久化到 config.py / .env
                 import config_loader as cfg
                 cfg_path = getattr(getattr(cfg, "_cfg", None), "__file__", None)
                 _update_config_value(cfg_path, "PRICE_ALERT_INTERVAL_MINUTES", minutes)
+                # 热更新 scheduler（立即生效）
+                from bot.scheduler import TaskScheduler
+                scheduler = TaskScheduler.get_instance()
+                if scheduler:
+                    scheduler.update_alert_interval(minutes)
+                # 频率警告
+                daily_calls = (8 * 60 // minutes)  # 按6.5小时交易时段估算
+                warn = ""
+                if minutes < 5:
+                    warn = f"\n⚠️ 间隔较短（{minutes}分钟），每交易日约调用 {daily_calls} 次，可能触发数据源限流"
+                elif daily_calls > 200:
+                    warn = f"\n⚠️ 每日约调用 {daily_calls} 次，建议适当延长间隔"
             except ValueError:
                 self.adapter.send_text(msg.user_id, "❌ 预警间隔需为 1~60 的整数")
                 return
 
-        _save_user_push_time(
-            self.adapter, msg.user_id,
-            morning_time=morning_time or None,
-            digest_time=digest_time or None,
-        )
+        if morning_time or digest_time:
+            _save_user_push_time(
+                self.adapter, msg.user_id,
+                morning_time=morning_time or None,
+                digest_time=digest_time or None,
+            )
+        elif alert_interval:
+            # 只改了间隔，也要给出成功提示
+            warn_msg = locals().get("warn", "")
+            self.adapter.send_success(
+                msg.user_id,
+                f"✅ 预警间隔已更新为 {minutes} 分钟，**立即生效**。{warn_msg}"
+            )
 
     def _cmd_macro(self, msg: "IncomingMessage") -> None:
         """手动查询美国宏观指标（CPI/失业率/联邦利率/国债）"""
@@ -917,6 +999,7 @@ class CommandHandler:
                 "digest_m":  digest_m,
                 "morning_h": morning_h,
                 "morning_m": morning_m,
+                "pause_until_normal": user_settings.get("alert_pause_until_normal", True),
             }
             self.adapter.send_card(msg.user_id, settings_card(vals))
             return
@@ -935,7 +1018,11 @@ class CommandHandler:
                     self.adapter.send_text(msg.user_id, "❌ 间隔范围：1~60 分钟")
                     return
                 _update_config_value(cfg_path, "PRICE_ALERT_INTERVAL_MINUTES", minutes)
-                self.adapter.send_text(msg.user_id, f"✅ 价格预警间隔已设为 {minutes} 分钟\n重启后生效：`bash restart.sh`")
+                from bot.scheduler import TaskScheduler
+                scheduler = TaskScheduler.get_instance()
+                if scheduler:
+                    scheduler.update_alert_interval(minutes)
+                self.adapter.send_text(msg.user_id, f"✅ 价格预警间隔已设为 {minutes} 分钟，立即生效")
 
             elif key == "digest_time":
                 h, m = map(int, val.split(":"))

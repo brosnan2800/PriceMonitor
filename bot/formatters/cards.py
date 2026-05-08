@@ -387,6 +387,7 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
         sections.append("\n**📋 我的推送任务**\n暂无自定义推送任务")
 
     # ── 价格预警区 ─────────────────────────────────────
+    alert_buttons = []
     if alerts:
         lines = ["\n**🔔 价格预警**\n"]
         for a in alerts:
@@ -394,6 +395,9 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
             cond = cond_map.get(a["condition"], a["condition"])
             lines.append(f"{status} #{a['id']} **{a['symbol']}** {cond} {a['threshold']}")
         sections.append("\n".join(lines))
+        alert_buttons.append(
+            CardButton("➖ 删除预警", "del_alert", {}, style="danger")
+        )
     else:
         sections.append("\n**🔔 价格预警**\n暂无价格预警")
 
@@ -403,6 +407,7 @@ def tasks_card(tasks: List[Dict], alerts: Optional[List[Dict]] = None) -> Outgoi
         buttons=[
             CardButton("新建定制 ➕", "go_newtask", {}, style="primary"),
             *task_buttons,
+            *alert_buttons,
         ]
     )
 
@@ -530,13 +535,34 @@ def del_announcement_stock_card(task_id: int, symbols: List[str]) -> "OutgoingCa
     )
 
 
+def del_alert_card(alerts: List[Dict]) -> "OutgoingCard":
+    """选择要删除的价格预警 — 每条一个按钮"""
+    cond_map = {"above": "高于", "below": "低于", "change_pct": "涨跌幅超"}
+    buttons = [
+        CardButton(
+            f"#{a['id']} {a['symbol']} {cond_map.get(a['condition'], a['condition'])} {a['threshold']}",
+            "do_del_alert",
+            {"alert_id": a["id"]}
+        )
+        for a in alerts
+    ]
+    return OutgoingCard(
+        title="➖ 删除价格预警",
+        content="点击要删除的预警条目：",
+        buttons=buttons,
+    )
+
+
 def settings_card(cfg_vals: Dict) -> OutgoingCard:
-    """系统设置卡片：早报/晚报推送时间 + 价格预警间隔"""
+    """系统设置卡片：早报/晚报推送时间 + 价格预警间隔 + 触发后暂停开关"""
     digest_h  = cfg_vals.get("digest_h", 15)
     digest_m  = cfg_vals.get("digest_m", 30)
     morning_h = cfg_vals.get("morning_h", 9)
     morning_m = cfg_vals.get("morning_m", 0)
     alert_min = cfg_vals.get("alert_min", 5)
+    pause_until_normal = cfg_vals.get("pause_until_normal", True)
+
+    pause_label = "触发后暂停：✅ 开启" if pause_until_normal else "触发后暂停：⬜ 关闭"
 
     return OutgoingCard(
         title="⚙️ 推送设置",
@@ -556,13 +582,16 @@ def settings_card(cfg_vals: Dict) -> OutgoingCard:
                 CardFormField(
                     name="alert_interval",
                     label="🔔 价格预警检查间隔（分钟）",
-                    placeholder=f"当前 {alert_min} 分钟，如 10",
+                    placeholder=f"当前 {alert_min} 分钟，建议 5~15，防止数据源限流",
                 ),
             ],
             submit_label="💾 保存",
             submit_action="save_push_times",
         ),
-        footer="早报/晚报时间仅对您自己生效；预警间隔重启后生效"
+        buttons=[
+            CardButton(pause_label, "toggle_alert_pause", {})
+        ],
+        footer=f"早报/晚报时间修改立即生效；预警间隔修改立即生效；价格预警仅在交易时段（9:30~11:30 / 13:00~15:00）运行"
     )
 
 
