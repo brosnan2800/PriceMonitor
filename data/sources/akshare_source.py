@@ -747,8 +747,8 @@ def auto_quote(symbol: str) -> Optional[Dict]:
     if s in _GLOBAL_INDEX_MAP or symbol in _GLOBAL_INDEX_MAP:
         return get_global_index_quote(s if s in _GLOBAL_INDEX_MAP else symbol)
 
-    # 美股：纯英文字母（1-5位，如 AAPL NVDA TSLA GOOG MSFT AMZN META）
-    if s.isalpha() and 1 <= len(s) <= 5:
+    # 美股：纯ASCII英文字母（1-5位，如 AAPL NVDA TSLA GOOG MSFT AMZN META）
+    if s.isascii() and s.isalpha() and 1 <= len(s) <= 5:
         return get_us_stock_quote(s)
 
     # 默认尝试A股
