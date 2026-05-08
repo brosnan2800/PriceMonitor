@@ -7,6 +7,7 @@ config.py
 # 运行时生成的文件
 price_history.json
 *.log
+*.pid
 *.db
 logs/
 

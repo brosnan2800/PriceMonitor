@@ -49,6 +49,7 @@ cp .env.example .env
 docker-compose up -d
 
 # 4. 飞书扫码配置（容器内执行，终端显示二维码）
+#    第一次看到“飞书尚未配置”提示是正常现象
 docker exec -it secretary-bot python3 feishu_setup.py
 
 # 5. 扫码完成后重启机器人
@@ -158,6 +159,21 @@ MORNING_REPORT_HOUR=9
 DAILY_DIGEST_HOUR=15
 PRICE_ALERT_INTERVAL_MINUTES=5
 ```
+
+> `.env` 修改后执行 `docker-compose restart` 即可重新加载配置。
+
+### Docker 构建很慢 / 拉镜像超时
+
+如果 `docker-compose build` 很慢，或出现：
+
+```text
+Get "https://registry-1.docker.io/v2/": Client.Timeout exceeded while awaiting headers
+```
+
+通常是服务器到 Docker Hub 网络不稳定。优先尝试：
+
+1. 配置 Docker 镜像加速器后重试
+2. 在本地构建镜像，再通过 `docker save | scp | docker load` 传到服务器
 
 ### 本地部署：编辑 `config.py`
 

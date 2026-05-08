@@ -10,7 +10,10 @@ read_env_file_var() {
     key="$1"
     env_path="/app/.env"
     if [ -f "$env_path" ]; then
-        grep "^${key}=" "$env_path" | tail -n 1 | cut -d= -f2-
+        val=$(grep "^${key}=" "$env_path" | tail -n 1 | cut -d= -f2-)
+        val="${val%\"}"
+        val="${val#\"}"
+        printf '%s' "$val"
     fi
 }
 
