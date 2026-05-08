@@ -747,8 +747,8 @@ def auto_quote(symbol: str) -> Optional[Dict]:
     if s in _GLOBAL_INDEX_MAP or symbol in _GLOBAL_INDEX_MAP:
         return get_global_index_quote(s if s in _GLOBAL_INDEX_MAP else symbol)
 
-    # 美股：纯英文字母（1-5位，如 AAPL NVDA TSLA GOOG MSFT AMZN META）
-    if s.isalpha() and 1 <= len(s) <= 5:
+    # 美股：纯ASCII英文字母（1-5位，如 AAPL NVDA TSLA GOOG MSFT AMZN META）
+    if s.isascii() and s.isalpha() and 1 <= len(s) <= 5:
         return get_us_stock_quote(s)
 
     # 默认尝试A股
@@ -786,8 +786,12 @@ def search_stock(keyword: str) -> List[Dict]:
             code = str(item.get("Code", "") or "")
             name = str(item.get("Name", "") or "")
             sec_type = str(item.get("SecurityTypeName", "") or "")
-            # 只保留 A 股
-            if code.isdigit() and len(code) == 6 and ("A" in sec_type or not sec_type):
+            classify = str(item.get("Classify", "") or "")
+            # A股：6位数字代码
+            is_a_stock = code.isdigit() and len(code) == 6
+            # 美股：字母代码（排除板块BK、基金衍生产品等，只保留普通股票 TypeUS=1）
+            is_us_stock = classify == "UsStock" and code.isalpha() and len(code) <= 5 and item.get("TypeUS") == "1"
+            if is_a_stock or is_us_stock:
                 results.append({"symbol": code, "name": name})
         if results:
             return results[:5]
@@ -798,11 +802,22 @@ def search_stock(keyword: str) -> List[Dict]:
     except Exception as e:
         logger.debug(f"东方财富搜索失败: {e}")
 
-    # ── 方案B：同花顺股票搜索 ──
+    # ── 方案B：同花顺股票搜索（A股备用，超时5s）──
     ak = _lazy_akshare()
     if ak:
         try:
-            df = ak.stock_search_detail_ths(symbol=keyword)
+            import signal
+
+            def _timeout_handler(signum, frame):
+                raise TimeoutError("同花顺搜索超时")
+
+            signal.signal(signal.SIGALRM, _timeout_handler)
+            signal.alarm(5)
+            try:
+                df = ak.stock_search_detail_ths(symbol=keyword)
+            finally:
+                signal.alarm(0)
+
             if df is not None and not df.empty:
                 results = []
                 for _, r in df.head(5).iterrows():
@@ -849,14 +864,8 @@ def search_stock(keyword: str) -> List[Dict]:
             except Exception:
                 pass
 
-    # ── 方案D：AKShare 全市场快照扫描 ──
-    if ak:
-        try:
-            df = ak.stock_zh_a_spot_em()
-            mask = df["名称"].str.contains(keyword, na=False)
-            rows = df[mask].head(5)
-            return [{"symbol": str(r["代码"]), "name": str(r["名称"])} for _, r in rows.iterrows()]
-        except Exception as e:
-            logger.debug(f"全市场搜索失败: {e}")
+    # ── 方案D：AKShare 全市场快照扫描（交互式禁用，太慢）──
+    # stock_zh_a_spot_em() 下载全市场 5000+ 条数据约需 2-3 分钟，不适合实时交互
+    # 仅保留作为注释说明，如需离线批量场景可手动调用
 
     return []

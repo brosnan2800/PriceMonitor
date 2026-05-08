@@ -151,8 +151,10 @@ class CommandHandler:
         symbol = keyword.upper()
         self.adapter.send_text(user_id, f"🔍 正在查询 {keyword}...")
 
-        # 非数字且非已知加密/指数代码 → 先名称搜索，避免用名字当代码查询产生误报
-        if not symbol.isdigit() and symbol not in _SKIP_SEARCH:
+        # 纯ASCII字母1-5位 = 美股代码（AAPL/TSLA/NVDA），直接查不搜索
+        _is_us_code = symbol.isascii() and symbol.isalpha() and 1 <= len(symbol) <= 5
+        # 非数字且非已知加密/指数/美股代码 → 先名称搜索，避免用名字当代码查询产生误报
+        if not symbol.isdigit() and symbol not in _SKIP_SEARCH and not _is_us_code:
             matches = search_stock(keyword)
             if len(matches) == 1:
                 data = auto_quote(matches[0]["symbol"])
@@ -163,7 +165,14 @@ class CommandHandler:
                 self.adapter.send_text(user_id, "\n".join(lines))
                 return
             else:
-                # 搜索无结果，最后尝试直接查（如英文股票代码 AAPL）
+                # 含中文的关键词搜索无结果 → 直接报错，不再尝试当代码查
+                if not keyword.isascii():
+                    self.adapter.send_text(
+                        user_id,
+                        f"❌ 未找到名称 `{keyword}`，请改用股票代码查询\n\n"
+                        "支持：\n• A股代码（如 `600519`）\n• 美股代码（如 `NVDA`）\n• 港股代码（如 `00700`）"
+                    )
+                    return
                 data = auto_quote(symbol)
         else:
             data = auto_quote(symbol)
@@ -206,8 +215,10 @@ class CommandHandler:
         symbol = keyword.upper()
         self.adapter.send_text(user_id, f"🔍 正在查询 {keyword}...")
 
-        # 非数字且非已知加密/指数代码 → 先名称搜索，避免用名字当代码查询产生误报
-        if not symbol.isdigit() and symbol not in _SKIP_SEARCH:
+        # 纯ASCII字母1-5位 = 美股代码（AAPL/TSLA/NVDA），直接查不搜索
+        _is_us_code = symbol.isascii() and symbol.isalpha() and 1 <= len(symbol) <= 5
+        # 非数字且非已知加密/指数/美股代码 → 先名称搜索，避免用名字当代码查询产生误报
+        if not symbol.isdigit() and symbol not in _SKIP_SEARCH and not _is_us_code:
             matches = search_stock(keyword)
             if len(matches) == 1:
                 symbol = matches[0]["symbol"]
@@ -219,6 +230,14 @@ class CommandHandler:
                 self.adapter.send_text(user_id, "\n".join(lines))
                 return
             else:
+                # 含中文的关键词搜索无结果 → 直接报错，不再尝试当代码查
+                if not keyword.isascii():
+                    self.adapter.send_text(
+                        user_id,
+                        f"❌ 未找到名称 `{keyword}`，请改用股票代码添加\n\n"
+                        "支持：\n• A股代码（如 `600519`）\n• 美股代码（如 `NVDA`）\n• 港股代码（如 `00700`）"
+                    )
+                    return
                 data = auto_quote(symbol)
         else:
             data = auto_quote(symbol)
