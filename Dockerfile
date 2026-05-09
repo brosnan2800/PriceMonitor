@@ -6,11 +6,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# 安装系统依赖（qrcode 需要 Pillow，Pillow 需要这些库）
+# 安装系统依赖（qrcode 需要 Pillow，Pillow 需要这些库；tzdata 提供时区数据）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libjpeg-dev \
     zlib1g-dev \
+    tzdata \
+    && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
 # 先复制 requirements，利用 Docker 层缓存
