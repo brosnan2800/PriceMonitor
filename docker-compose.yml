@@ -5,7 +5,12 @@ services:
     # 从 .env 文件加载所有密钥（首次部署前需先创建 .env）
     env_file:
       - .env
+    environment:
+      # 时区设置（确保定时任务和日志使用北京时间）
+      - TZ=Asia/Shanghai
     volumes:
+      # 时区文件挂载（可选，某些镜像需要）
+      - /etc/localtime:/etc/localtime:ro
       # SQLite 数据库持久化（重要！删除此行会丢失自选/预警数据）
       - ./data:/app/data
       # 日志持久化
