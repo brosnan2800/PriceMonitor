@@ -2,9 +2,6 @@ services:
   bot:
     build: .
     container_name: secretary-bot
-    # 从 .env 文件加载所有密钥（首次部署前需先创建 .env）
-    env_file:
-      - .env
     environment:
       # 时区设置（确保定时任务和日志使用北京时间）
       - TZ=Asia/Shanghai

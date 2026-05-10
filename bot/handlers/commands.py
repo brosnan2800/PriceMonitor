@@ -949,7 +949,9 @@ class CommandHandler:
             )
             if not is_configured():
                 self.adapter.send_text(
-                    msg.user_id, "⚠️ Alpha Vantage key 未配置，无法查询宏观数据\n请在 .env 文件中设置 ALPHA_VANTAGE_API_KEY"
+                    msg.user_id,
+                    "⚠️ Alpha Vantage key 未配置，无法查询宏观数据\n"
+                    "请在 .env 文件中设置 ALPHA_VANTAGE_API_KEY；如果是 Docker 部署，修改后执行 docker-compose restart"
                 )
                 return
             if is_quota_exhausted():
