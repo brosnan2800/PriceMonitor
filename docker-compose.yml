@@ -2,9 +2,8 @@ services:
   bot:
     build: .
     container_name: secretary-bot
-    # 从 .env 文件加载所有密钥（首次部署前需先创建 .env）
-    env_file:
-      - .env
+    environment:
+      - TZ=Asia/Shanghai
     volumes:
       # SQLite 数据库持久化（重要！删除此行会丢失自选/预警数据）
       - ./data:/app/data

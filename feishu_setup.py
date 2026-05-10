@@ -154,6 +154,17 @@ def _write_env(app_id: str, app_secret: str, open_id: str) -> bool:
     return True
 
 
+def _read_env_value(key: str) -> str:
+    env_path = Path(".env")
+    if not env_path.exists():
+        return ""
+
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith(f"{key}="):
+            return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
+
+
 def _write_config(app_id: str, app_secret: str, open_id: str):
     """将飞书凭证写入 config.py（本地模式）"""
     try:
@@ -243,6 +254,12 @@ def main():
         print("   本地模式：")
         print("   bash restart.sh           # 后台重启")
         print("   python3 bot/app.py        # 前台调试")
+
+    if not _read_env_value("ALPHA_VANTAGE_API_KEY"):
+        print()
+        print("ℹ️  如需使用宏观数据 /macro、汇率、原油等 Alpha Vantage 功能：")
+        print("   请手动编辑 .env，填入 ALPHA_VANTAGE_API_KEY=你的key")
+        print("   修改后执行：docker-compose restart")
 
     print()
     print("=" * 50)

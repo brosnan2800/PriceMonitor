@@ -32,27 +32,51 @@
 
 ### 步骤 2: 设置配置文件
 
-1. 复制配置文件模板:
+#### Docker 部署（推荐）
+
+1. 复制配置模板：
+   ```bash
+   cp .env.example .env
+   ```
+
+2. 编辑 `.env`，至少填写以下内容：
+   ```bash
+   # 飞书（运行 docker exec -it secretary-bot python3 feishu_setup.py 后会自动写入）
+   FEISHU_APP_ID=
+   FEISHU_APP_SECRET=
+   FEISHU_OPEN_ID=
+
+   # Alpha Vantage（可选，但 /macro 宏观、汇率、原油等功能依赖它）
+   ALPHA_VANTAGE_API_KEY=你的AlphaVantage密钥
+
+   # Telegram（可选）
+   TELEGRAM_BOT_TOKEN=
+   TELEGRAM_CHAT_ID=
+   ```
+
+3. 如果你先运行了飞书安装向导，**也仍需要手动把 `ALPHA_VANTAGE_API_KEY` 写进 `.env`**。
+
+4. 修改 `.env` 后，执行：
+   ```bash
+   docker-compose restart
+   ```
+
+#### 本地部署（兼容旧方式）
+
+1. 复制配置文件模板：
    ```bash
    cp config.example.py config.py
    ```
 
-2. 编辑 `config.py`:
+2. 编辑 `config.py`：
    ```python
-   # Alpha Vantage API 配置
    ALPHA_VANTAGE_API_KEY = "你的AlphaVantage密钥"
-
-   # Telegram 机器人配置
    TELEGRAM_BOT_TOKEN = "你的Telegram机器人Token"
    TELEGRAM_CHAT_ID = "你的Chat ID"
-
-   # 监控配置 (可根据需要调整)
-   MONITOR_INTERVAL_MINUTES = 5  # 检查间隔，建议5-15分钟
-
-   # 价格阈值提醒设置
-   USD_CNH_UPPER_THRESHOLD = 7.15  # USD/CNH超过此值提醒
-   USD_CNH_LOWER_THRESHOLD = 7.10  # USD/CNH低于此值提醒
-   BRENT_OIL_CHANGE_THRESHOLD_PERCENT = 1.0  # 原油价格波动超过此百分比提醒
+   MONITOR_INTERVAL_MINUTES = 5
+   USD_CNH_UPPER_THRESHOLD = 7.15
+   USD_CNH_LOWER_THRESHOLD = 7.10
+   BRENT_OIL_CHANGE_THRESHOLD_PERCENT = 1.0
    ```
 
 ### 步骤 3: 安装依赖
