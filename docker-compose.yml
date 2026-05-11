@@ -11,7 +11,7 @@ services:
       - ./logs:/app/logs
       # .env 挂载进容器，feishu_setup.py 扫码后可写入
       - ./.env:/app/.env
-    restart: unless-stopped
+    restart: always
     # 保持 stdin/tty，允许 feishu_setup.py 在容器内显示二维码
     stdin_open: true
     tty: true
