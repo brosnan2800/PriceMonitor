@@ -24,6 +24,7 @@ from apscheduler.triggers.cron import CronTrigger
 if TYPE_CHECKING:
     from bot.adapters.base import BaseAdapter
 
+from bot.adapters.feishu_adapter import CrossAppUserError
 from bot.formatters.cards import (
     daily_digest_card, announcement_card,
     morning_modules_card, news_sentiment_card, macro_report_card,
@@ -338,6 +339,9 @@ class TaskScheduler:
                 continue
             try:
                 self._send_daily_digest(adapter, uid)
+            except CrossAppUserError as e:
+                logger.warning(f"日报跳过（跨应用账号）{uid}: {e}")
+                self._disable_cross_app_user(uid)
             except Exception as e:
                 logger.error(f"日报推送失败 {uid}: {e}")
 
@@ -354,8 +358,21 @@ class TaskScheduler:
                 continue
             try:
                 self._send_index_report(adapter, uid)
+            except CrossAppUserError as e:
+                logger.warning(f"早报跳过（跨应用账号）{uid}: {e}")
+                self._disable_cross_app_user(uid)
             except Exception as e:
                 logger.error(f"早报推送失败 {uid}: {e}")
+
+    def _disable_cross_app_user(self, user_id: str) -> None:
+        """将跨应用账号标记为 disabled，后续不再推送"""
+        try:
+            settings = db.get_user_settings(user_id)
+            settings["disabled"] = True
+            db.update_user_settings(user_id, settings)
+            logger.info(f"已禁用跨应用账号 {user_id}")
+        except Exception as e:
+            logger.error(f"禁用用户失败 {user_id}: {e}")
 
     @staticmethod
     def _is_trading_time() -> bool:
@@ -515,15 +532,28 @@ class TaskScheduler:
         return user.get("platform", "feishu") if user else "feishu"
 
     def _get_all_users(self) -> List[Dict]:
-        """获取所有用户（简单实现）"""
+        """获取所有有效用户（排除测试账号和跨应用已禁用账号）"""
         try:
             import sqlite3
+            import json as _json
             from data.db import DB_PATH
             conn = sqlite3.connect(str(DB_PATH))
             conn.row_factory = sqlite3.Row
             rows = conn.execute("SELECT * FROM users").fetchall()
             conn.close()
-            return [dict(r) for r in rows]
+            result = []
+            for r in rows:
+                user = dict(r)
+                if user["user_id"] == "test_user_001":
+                    continue
+                try:
+                    settings = _json.loads(user.get("settings") or "{}")
+                except Exception:
+                    settings = {}
+                if settings.get("disabled"):
+                    continue
+                result.append(user)
+            return result
         except Exception as e:
             logger.error(f"获取用户列表失败: {e}")
             return []
