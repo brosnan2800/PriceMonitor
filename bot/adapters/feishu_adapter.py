@@ -30,6 +30,11 @@ _AUTH_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/intern
 _PATCH_URL = "https://open.feishu.cn/open-apis/im/v1/messages/{message_id}"
 
 
+class CrossAppUserError(Exception):
+    """用户 open_id 属于其他飞书应用，当前 bot 无法发送消息"""
+    pass
+
+
 class FeishuAdapter(BaseAdapter):
     """
     飞书渠道适配器
@@ -98,6 +103,11 @@ class FeishuAdapter(BaseAdapter):
             result = resp.json()
             if result.get("code") == 0:
                 return result.get("data", {}).get("message_id")
+            error_code = result.get("code")
+            if error_code in (99992361, 99992351):
+                raise CrossAppUserError(
+                    f"用户 {receive_id} 属于其他飞书应用（code={error_code}），已跳过"
+                )
             logger.error(f"飞书发送失败: {result}")
         except Exception as e:
             logger.error(f"飞书发送异常: {e}")
