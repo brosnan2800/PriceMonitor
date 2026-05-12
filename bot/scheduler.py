@@ -66,10 +66,37 @@ class TaskScheduler:
         self._restore_user_push_times()
         self._scheduler.start()
         logger.info("任务调度引擎启动")
+        # 补发：NAS 时钟可能在开机时偏快，NTP 纠正后早报窗口已过
+        # 如果在工作日 08:00-12:00 内启动，延迟 30 秒触发一次早报
+        self._schedule_startup_morning_report()
 
     def stop(self) -> None:
         self._scheduler.shutdown(wait=False)
         logger.info("任务调度引擎停止")
+
+    def _schedule_startup_morning_report(self) -> None:
+        """
+        NAS 定时开关机场景下，系统时钟可能在开机时偏快，NTP 修正后 APScheduler
+        已将今天的早报调度到明天。此方法检测启动时间是否在工作日 08:00-12:00 窗口
+        内，若是则注册一个 30 秒后执行的一次性早报任务来补发。
+        """
+        now = datetime.now()
+        if now.weekday() >= 5:
+            return
+        t = now.hour * 60 + now.minute
+        if not (8 * 60 <= t < 12 * 60):
+            return
+        from datetime import timedelta
+        run_at = now + timedelta(seconds=30)
+        self._scheduler.add_job(
+            self._job_index_report_all,
+            "date",
+            run_date=run_at,
+            id="startup_morning_report",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+        logger.info(f"检测到工作日早晨启动，将于 {run_at.strftime('%H:%M:%S')} 补发早报")
 
     def reload_user_jobs(self) -> None:
         """重新加载用户任务（新建/删除任务后调用）"""
