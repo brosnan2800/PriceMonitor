@@ -71,6 +71,13 @@ CREATE TABLE IF NOT EXISTS push_log (
     content_hash TEXT,                     -- 防重复推送
     pushed_at    TEXT DEFAULT (datetime('now','localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS builtin_report_log (
+    report_type  TEXT NOT NULL,            -- 'morning' | 'digest'
+    sent_date    TEXT NOT NULL,            -- '2026-05-12'
+    sent_at      TEXT DEFAULT (datetime('now','localtime')),
+    UNIQUE (report_type, sent_date)        -- 每天每类只记录一次
+);
 """
 
 
@@ -354,3 +361,28 @@ def already_pushed(user_id: str, content_hash: str, within_hours: int = 24) -> b
             LIMIT 1
         """, (user_id, content_hash, f"-{within_hours} hours")).fetchone()
         return row is not None
+
+
+# ── Builtin Report Log（内置任务去重） ────────────────────────────────
+
+def builtin_report_sent_today(report_type: str) -> bool:
+    """检查今天指定类型的内置报告是否已发送（防止重启导致重复推送）"""
+    from datetime import datetime as _dt
+    today = _dt.now().strftime('%Y-%m-%d')
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM builtin_report_log WHERE report_type=? AND sent_date=? LIMIT 1",
+            (report_type, today)
+        ).fetchone()
+    return row is not None
+
+
+def mark_builtin_report_sent(report_type: str) -> None:
+    """标记今天指定类型的内置报告已发送"""
+    from datetime import datetime as _dt
+    today = _dt.now().strftime('%Y-%m-%d')
+    with _conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO builtin_report_log (report_type, sent_date) VALUES (?, ?)",
+            (report_type, today)
+        )

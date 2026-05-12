@@ -15,6 +15,7 @@ APScheduler 任务调度引擎
 import hashlib
 import json
 import logging
+import threading
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
@@ -78,26 +79,30 @@ class TaskScheduler:
     def _schedule_startup_morning_report(self) -> None:
         """
         NAS 定时开关机场景下，系统时钟可能在开机时偏快，NTP 修正后 APScheduler
-        已将今天的早报调度到明天。此方法检测启动时间是否在工作日 08:00-12:00 窗口
-        内，若是则注册一个 30 秒后执行的一次性早报任务来补发。
+        已将今天的早报调度到明天。此方法在工作日启动时检查：
+        1. DB 有没有发过（防全局重复）
+        2. 有没有用户的自定义 morning 任务（避免与个人任务冲突）
+        若两者都通过，则用 threading.Timer 延迟 30 秒触发补发。
+        注意：必须用 threading.Timer 而非 APScheduler date trigger，因为后者
+        基于绝对时间，NTP 纠正后 run_at 会飘到未来 7 小时。
         """
         now = datetime.now()
         if now.weekday() >= 5:
             return
+        # 扩大窗口到 18:00，避免因为其他原因的白天重启也被跳过
         t = now.hour * 60 + now.minute
-        if not (8 * 60 <= t < 12 * 60):
+        if not (8 * 60 <= t < 18 * 60):
             return
-        from datetime import timedelta
-        run_at = now + timedelta(seconds=30)
-        self._scheduler.add_job(
-            self._job_index_report_all,
-            "date",
-            run_date=run_at,
-            id="startup_morning_report",
-            replace_existing=True,
-            misfire_grace_time=300,
-        )
-        logger.info(f"检测到工作日早晨启动，将于 {run_at.strftime('%H:%M:%S')} 补发早报")
+        if db.builtin_report_sent_today("morning"):
+            logger.info("今日早报已发送（DB 记录），跳过补发调度")
+            return
+        # 如果任何用户配置了自定义 morning 任务，不补发（让个人任务自己处理）
+        all_jobs = self._scheduler.get_jobs()
+        if any(job.id.startswith("user_morning_") for job in all_jobs):
+            logger.info("检测到用户自定义 morning 任务，跳过全局补发（用个人任务代替）")
+            return
+        logger.info("今日早报未发，将在 30 秒后补发（threading.Timer，不受 NTP 时钟纠正影响）")
+        threading.Timer(30.0, self._job_index_report_all).start()
 
     def reload_user_jobs(self) -> None:
         """重新加载用户任务（新建/删除任务后调用）"""
@@ -327,6 +332,9 @@ class TaskScheduler:
 
     def _job_daily_digest_all(self) -> None:
         """全量用户收盘日报（内置）；有个人专属 job 的用户跳过，避免重复推送"""
+        if db.builtin_report_sent_today("digest"):
+            logger.info("今日日报已发送，跳过重复推送")
+            return
         users = self._get_all_users()
         for user in users:
             uid = user["user_id"]
@@ -344,9 +352,13 @@ class TaskScheduler:
                 self._disable_cross_app_user(uid)
             except Exception as e:
                 logger.error(f"日报推送失败 {uid}: {e}")
+        db.mark_builtin_report_sent("digest")
 
     def _job_index_report_all(self) -> None:
         """全量用户指数早报（内置）；有个人专属 job 的用户跳过，避免重复推送"""
+        if db.builtin_report_sent_today("morning"):
+            logger.info("今日早报已发送，跳过重复推送")
+            return
         users = self._get_all_users()
         for user in users:
             uid = user["user_id"]
@@ -363,6 +375,7 @@ class TaskScheduler:
                 self._disable_cross_app_user(uid)
             except Exception as e:
                 logger.error(f"早报推送失败 {uid}: {e}")
+        db.mark_builtin_report_sent("morning")
 
     def _disable_cross_app_user(self, user_id: str) -> None:
         """将跨应用账号标记为 disabled，后续不再推送"""
