@@ -10,12 +10,11 @@ OPS.md 包含：
 - 标准部署流程（rsync → docker build → docker-compose up --force-recreate）
 - .env 修改方式（宿主机直接编辑，restart 生效）
 - docker-compose 常用命令
-- NAS 极空间特殊说明（时钟偏差、threading.Timer 等）
+- NAS 极空间特殊说明
 
 **不要**：
 - 尝试在生产环境使用 git pull
 - 在不了解 bind-mount 结构的情况下直接重建容器
-- 使用 APScheduler date trigger（NAS 时钟偏差问题，用 threading.Timer）
 
 ## 项目简介
 
