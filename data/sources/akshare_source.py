@@ -207,7 +207,7 @@ def get_stock_quote(symbol: str) -> Optional[Dict]:
 
     ak = _lazy_akshare()
     if not ak:
-        logger.warning(f"未找到股票: {symbol}")
+        logger.debug(f"akshare 未安装，跳过方案C: {symbol}")
         return None
 
     # ── 方案C：AKShare 分时成交接口 ──
@@ -750,6 +750,16 @@ def auto_quote(symbol: str) -> Optional[Dict]:
     # 美股：纯ASCII英文字母（1-5位，如 AAPL NVDA TSLA GOOG MSFT AMZN META）
     if s.isascii() and s.isalpha() and 1 <= len(s) <= 5:
         return get_us_stock_quote(s)
+
+    # 中文名称 → 先用 search_stock 解析成代码再查行情
+    if not symbol.isascii():
+        results = search_stock(symbol.strip())
+        if results:
+            resolved_code = results[0]["symbol"]
+            logger.debug(f"名称 '{symbol}' 解析为代码 {resolved_code}")
+            return auto_quote(resolved_code)
+        logger.warning(f"未找到股票: {symbol}")
+        return None
 
     # 默认尝试A股
     return get_stock_quote(s)
