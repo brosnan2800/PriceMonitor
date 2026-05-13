@@ -120,12 +120,26 @@ ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose logs --tail 20"
 
 ## .env 配置
 
-`.env` 存放在宿主机 `/root/Desktop/priceMonitor/.env`，挂载进容器。
+`.env` 存放在宿主机 `/root/Desktop/priceMonitor/.env`，以 bind-mount 方式挂载进容器。
 
-**修改 .env 后需重启生效：**
+**直接在宿主机（mydocker）上编辑，restart 即可生效：**
 ```bash
+# 在 mydocker 上编辑（vi 或其他方式）
+ssh mydocker "vi /root/Desktop/priceMonitor/.env"
+
+# 重启容器让新配置生效
 ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose restart"
 ```
+
+**注意：只有以下路径是 bind-mount（宿主机编辑有效）：**
+
+| 宿主机路径 | 说明 |
+|-----------|------|
+| `/root/Desktop/priceMonitor/.env` | 环境变量，restart 生效 |
+| `/root/Desktop/priceMonitor/data/` | 数据库持久化，不需要重启 |
+| `/root/Desktop/priceMonitor/logs/` | 日志输出，不需要重启 |
+
+**代码文件（`.py`）不在挂载列表里，修改代码必须重新构建镜像（见"部署新版本"）。**
 
 主要 key（详见 config.example.py）：
 - `FEISHU_APP_ID` / `FEISHU_APP_SECRET`
