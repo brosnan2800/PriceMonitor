@@ -50,22 +50,38 @@ git -C "/Users/yanglei/develop/claude world/claudework" push origin main
 
 ### 部署代码到生产环境
 
-**不要 git pull！** 正确方式是 scp → docker cp → restart：
+mydocker **没有源码也没有 git 仓库**，必须在本地构建镜像后传过去。
+
+#### ✅ 标准部署（推荐，改动永久生效）
 
 ```bash
-# 1. 拷贝文件到 mydocker
-scp "/Users/yanglei/develop/claude world/claudework/bot/scheduler.py" mydocker:/tmp/
-scp "/Users/yanglei/develop/claude world/claudework/data/db.py" mydocker:/tmp/
+# 1. 本地构建镜像
+cd "/Users/yanglei/develop/claude world/claudework"
+docker build --no-cache -t pricemonitor-bot .
 
-# 2. 复制进容器（注意：data/ 挂载到宿主机，db.py 要单独 docker cp）
-ssh mydocker "docker cp /tmp/scheduler.py secretary-bot:/app/bot/scheduler.py"
-ssh mydocker "docker cp /tmp/db.py secretary-bot:/app/data/db.py"
+# 2. 导出镜像
+docker save pricemonitor-bot | gzip > /tmp/pricemonitor-bot.tar.gz
 
-# 3. 重启容器
-ssh mydocker "docker restart secretary-bot"
+# 3. 传到 mydocker
+scp /tmp/pricemonitor-bot.tar.gz mydocker:/tmp/
 
-# 4. 查看日志确认启动正常
+# 4. mydocker 上加载镜像并重建容器
+ssh mydocker "docker load < /tmp/pricemonitor-bot.tar.gz"
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose up -d --force-recreate"
+
+# 5. 确认启动正常
 ssh mydocker "docker logs secretary-bot --tail 30"
+```
+
+#### ⚡ 快速热更新（仅改了 .py 文件，临时生效，容器 recreate 后丢失）
+
+> 仅用于紧急修复或调试，不作为正式部署手段。
+
+```bash
+scp "/Users/yanglei/develop/claude world/claudework/bot/scheduler.py" mydocker:/tmp/
+ssh mydocker "docker cp /tmp/scheduler.py secretary-bot:/app/bot/scheduler.py"
+ssh mydocker "docker restart secretary-bot"
+ssh mydocker "docker logs secretary-bot --tail 20"
 ```
 
 ### 常用运维命令
