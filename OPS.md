@@ -36,8 +36,8 @@ git -C "/Users/yanglei/develop/claude world/claudework" push origin main
 |------|-----|
 | SSH 别名 | `mydocker` |
 | 容器名 | `secretary-bot` |
+| docker-compose.yml 路径 | `/root/Desktop/priceMonitor/docker-compose.yml` |
 | 容器内应用路径 | `/app/` |
-| 宿主机项目路径 | `/root/Desktop/priceMonitor/` |
 | **注意** | 宿主机路径**不是 git 仓库**，不能 `git pull` |
 
 ### 宿主机绑定挂载
@@ -48,84 +48,112 @@ git -C "/Users/yanglei/develop/claude world/claudework" push origin main
 | `/root/Desktop/priceMonitor/.env` | `/app/.env` | 环境变量配置 |
 | `/root/Desktop/priceMonitor/logs/` | `/app/logs/` | 日志持久化 |
 
-### 部署代码到生产环境
+---
 
-mydocker **没有源码也没有 git 仓库**，必须在本地构建镜像后传过去。
+## 常用运维命令（全部基于 docker-compose）
 
-#### ✅ 标准部署（推荐，改动永久生效）
-
-```bash
-# 1. 本地构建镜像
-cd "/Users/yanglei/develop/claude world/claudework"
-docker build --no-cache -t pricemonitor-bot .
-
-# 2. 导出镜像
-docker save pricemonitor-bot | gzip > /tmp/pricemonitor-bot.tar.gz
-
-# 3. 传到 mydocker
-scp /tmp/pricemonitor-bot.tar.gz mydocker:/tmp/
-
-# 4. mydocker 上加载镜像并重建容器
-ssh mydocker "docker load < /tmp/pricemonitor-bot.tar.gz"
-ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose up -d --force-recreate"
-
-# 5. 确认启动正常
-ssh mydocker "docker logs secretary-bot --tail 30"
-```
-
-#### ⚡ 快速热更新（仅改了 .py 文件，临时生效，容器 recreate 后丢失）
-
-> 仅用于紧急修复或调试，不作为正式部署手段。
-
-```bash
-scp "/Users/yanglei/develop/claude world/claudework/bot/scheduler.py" mydocker:/tmp/
-ssh mydocker "docker cp /tmp/scheduler.py secretary-bot:/app/bot/scheduler.py"
-ssh mydocker "docker restart secretary-bot"
-ssh mydocker "docker logs secretary-bot --tail 20"
-```
-
-### 常用运维命令
+所有命令通过 `ssh mydocker` 在宿主机执行，工作目录 `/root/Desktop/priceMonitor`。
 
 ```bash
 # 查看容器状态
-ssh mydocker "docker ps | grep secretary"
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose ps"
 
-# 实时查看日志
-ssh mydocker "docker logs secretary-bot -f --tail 50"
+# 查看最近日志（静态）
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose logs --tail 50"
+
+# 实时追踪日志
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose logs -f --tail 50"
+
+# 重启容器（配置/代码热更新后用）
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose restart"
+
+# 停止容器
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose stop"
+
+# 启动容器
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose up -d"
 
 # 进入容器 shell
-ssh mydocker "docker exec -it secretary-bot bash"
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose exec secretary-bot bash"
 
 # 查看数据库用户
-ssh mydocker "docker exec secretary-bot sqlite3 /app/data/secretary.db 'SELECT user_id, platform, settings FROM users'"
-
-# 重启容器
-ssh mydocker "docker restart secretary-bot"
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose exec secretary-bot sqlite3 /app/data/secretary.db 'SELECT user_id, platform, settings FROM users'"
 ```
 
 ---
 
-## NAS 特殊说明
+## 部署新版本到生产环境
 
-- **设备**：极空间 NAS（192.168.1.108）
-- **定时关机**：每天 03:16 自动关机
-- **定时开机**：每天 08:00 自动开机
-- **已知 bug**：开机时硬件时钟偏快约 7 小时（RTC/NTP 混淆），NTP 慢慢纠正
-- **代码缓解**：`_schedule_startup_morning_report()` 用 `threading.Timer`（不受时钟跳变影响）在启动后 30 秒补发早报，并通过 `builtin_report_log` DB 表防止重复推送
-- **`restart: always`**：docker-compose.yml 已设置，确保 NAS 开机后容器自动拉起
+mydocker **没有源码也没有 git 仓库**，需要在本地同步源码到服务器上远程构建。
+
+### ✅ 标准部署流程
+
+```bash
+# 1. 把源码 rsync 到 mydocker 临时构建目录
+rsync -av --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' \
+  --exclude='data/secretary.db' --exclude='*.log' \
+  "/Users/yanglei/develop/claude world/claudework/" \
+  "mydocker:/tmp/pricemonitor-build/"
+
+# 2. 在 mydocker 上构建新镜像
+ssh mydocker "cd /tmp/pricemonitor-build && docker build --no-cache -t pricemonitor-bot . 2>&1 | tail -5"
+
+# 3. 用新镜像重建容器（--force-recreate 确保使用新镜像，data/.env 挂载不受影响）
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose up -d --force-recreate"
+
+# 4. 确认启动正常
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose logs --tail 20"
+```
+
+### ⚡ 快速热更新（仅 .py 文件修改，调试用）
+
+> **临时生效**，下次 `docker-compose up --force-recreate` 后丢失，不作为正式部署。
+
+```bash
+scp "/Users/yanglei/develop/claude world/claudework/bot/scheduler.py" mydocker:/tmp/
+ssh mydocker "docker cp /tmp/scheduler.py secretary-bot:/app/bot/scheduler.py"
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose restart"
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose logs --tail 20"
+```
 
 ---
 
 ## .env 配置
 
-`.env` 存放在宿主机 `/root/Desktop/priceMonitor/.env`，挂载进容器，**修改后需 restart 容器生效**。
+`.env` 存放在宿主机 `/root/Desktop/priceMonitor/.env`，以 bind-mount 方式挂载进容器。
 
+**直接在宿主机（mydocker）上编辑，restart 即可生效：**
 ```bash
-# 修改 .env 后重启
-ssh mydocker "docker restart secretary-bot"
+# 在 mydocker 上编辑（vi 或其他方式）
+ssh mydocker "vi /root/Desktop/priceMonitor/.env"
+
+# 重启容器让新配置生效
+ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose restart"
 ```
+
+**注意：只有以下路径是 bind-mount（宿主机编辑有效）：**
+
+| 宿主机路径 | 说明 |
+|-----------|------|
+| `/root/Desktop/priceMonitor/.env` | 环境变量，restart 生效 |
+| `/root/Desktop/priceMonitor/data/` | 数据库持久化，不需要重启 |
+| `/root/Desktop/priceMonitor/logs/` | 日志输出，不需要重启 |
+
+**代码文件（`.py`）不在挂载列表里，修改代码必须重新构建镜像（见"部署新版本"）。**
 
 主要 key（详见 config.example.py）：
 - `FEISHU_APP_ID` / `FEISHU_APP_SECRET`
 - `ALPHA_VANTAGE_API_KEY`
 - `MORNING_REPORT_HOUR` / `MORNING_REPORT_MINUTE`
+
+---
+
+## NAS 特殊说明
+
+- **设备**：极空间 NAS，docker 运行在极空间内置 Docker 管理器
+- **定时关机**：每天 03:16 自动关机
+- **定时开机**：每天 08:00 自动开机
+- **`restart: always`**：docker-compose.yml 已设置，确保 NAS 开机后容器自动拉起
+- **已知 bug**：开机时硬件时钟偏快约 7 小时（RTC/NTP 混淆），NTP 慢慢纠正，导致 APScheduler 把早报任务排到明天
+- **代码缓解**：`_schedule_startup_morning_report()` 用 `threading.Timer`（不受时钟跳变影响）在启动 30 秒后补发早报；`builtin_report_log` DB 表确保当天无论重启多少次只发一次
+

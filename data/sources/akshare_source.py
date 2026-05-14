@@ -5,15 +5,14 @@ A股数据源封装
 
 主数据源：腾讯财经 API（HTTP，股票名称+完整行情，CDN 无 push2 依赖）
 备用数据源：pytdx（通达信 TCP 协议，无 HTTP CDN 依赖，价格准确）
-最终降级：AKShare（HTTP，东方财富接口，需网络条件良好）
 
 支持：
   - A股实时行情（单支 + 全市场）
   - 沪深指数
-  - 个股公告
+  - 个股公告（东方财富 notice API）
   - 港股实时
-  - 加密货币
-  - 汇率（降级到 Alpha Vantage）
+  - 加密货币（Binance）
+  - 美股（腾讯财经）
 """
 
 import logging
@@ -45,15 +44,6 @@ _TDX_SERVERS = [
     ('14.215.167.220', 7709),
 ]
 
-
-def _lazy_akshare():
-    """懒加载 akshare，避免启动时崩溃"""
-    try:
-        import akshare as ak
-        return ak
-    except ImportError:
-        logger.error("缺少 akshare，请运行: pip install akshare")
-        return None
 
 
 def _get_tdx_market(symbol: str) -> int:
@@ -205,82 +195,6 @@ def get_stock_quote(symbol: str) -> Optional[Dict]:
             except Exception:
                 pass
 
-    ak = _lazy_akshare()
-    if not ak:
-        logger.warning(f"未找到股票: {symbol}")
-        return None
-
-    # ── 方案C：AKShare 分时成交接口 ──
-    try:
-        df = ak.stock_intraday_em(symbol=symbol)
-        if df is not None and not df.empty:
-            last = df.iloc[-1]
-            price = float(last.get("成交价", 0) or 0)
-            name = symbol
-            prev_close = price
-            try:
-                info_df = ak.stock_individual_info_em(symbol=symbol)
-                info = dict(zip(info_df["item"], info_df["value"]))
-                name = str(info.get("股票简称", symbol))
-                if len(df) > 1:
-                    first_price = float(df.iloc[0].get("成交价", price) or price)
-                    prev_close = first_price if first_price else price
-            except Exception:
-                pass
-            change = round(price - prev_close, 3)
-            change_pct = round((change / prev_close * 100) if prev_close else 0, 2)
-            return {
-                "symbol": symbol,
-                "name": name,
-                "asset_type": TYPE_A_STOCK,
-                "price": price,
-                "change": change,
-                "change_pct": change_pct,
-                "open": 0.0,
-                "high": float(df["成交价"].max()),
-                "low": float(df["成交价"].min()),
-                "volume": 0.0,
-                "turnover": 0.0,
-                "market_cap": 0.0,
-                "pe_ratio": 0.0,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "source": "AKShare/分时"
-            }
-    except Exception as e:
-        logger.debug(f"AKShare 分时接口失败 {symbol}: {e}")
-
-    # ── 方案D：AKShare 全市场快照 ──
-    try:
-        df = ak.stock_zh_a_spot_em()
-        row = df[df["代码"] == symbol]
-        if row.empty:
-            row = df[df["代码"].str.endswith(symbol)]
-        if not row.empty:
-            r = row.iloc[0]
-            price = float(r.get("最新价", 0) or 0)
-            prev_close = float(r.get("昨收", price) or price)
-            change = round(price - prev_close, 3)
-            change_pct = round((change / prev_close * 100) if prev_close else 0, 2)
-            return {
-                "symbol": symbol,
-                "name": str(r.get("名称", "")),
-                "asset_type": TYPE_A_STOCK,
-                "price": price,
-                "change": change,
-                "change_pct": change_pct,
-                "open": float(r.get("今开", 0) or 0),
-                "high": float(r.get("最高", 0) or 0),
-                "low": float(r.get("最低", 0) or 0),
-                "volume": float(r.get("成交量", 0) or 0),
-                "turnover": float(r.get("成交额", 0) or 0),
-                "market_cap": float(r.get("总市值", 0) or 0),
-                "pe_ratio": float(r.get("市盈率-动态", 0) or 0),
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "source": "AKShare/东方财富"
-            }
-    except Exception as e:
-        logger.debug(f"AKShare 全市场快照接口失败 {symbol}: {e}")
-
     logger.warning(f"未找到股票: {symbol}")
     return None
 
@@ -345,33 +259,7 @@ def get_index_quotes() -> List[Dict]:
     except Exception as e:
         logger.debug(f"腾讯财经指数接口失败: {e}")
 
-    # ── 方案B：AKShare ──
-    ak = _lazy_akshare()
-    if not ak:
-        return []
-    try:
-        df = ak.stock_zh_index_spot_em()
-        results = []
-        for code, name in INDEX_MAP.items():
-            short_code = code[2:]
-            row = df[df["代码"] == short_code]
-            if row.empty:
-                continue
-            r = row.iloc[0]
-            results.append({
-                "symbol": code,
-                "name": name,
-                "asset_type": TYPE_INDEX,
-                "price": float(r.get("最新价", 0) or 0),
-                "change": float(r.get("涨跌额", 0) or 0),
-                "change_pct": float(r.get("涨跌幅", 0) or 0),
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "source": "AKShare/东方财富"
-            })
-        return results
-    except Exception as e:
-        logger.error(f"获取指数行情失败: {e}")
-        return []
+    return []
 
 
 # ── 个股公告 ──────────────────────────────────────────────────────────
@@ -390,28 +278,36 @@ def get_stock_announcements(symbol: str, limit: int = 5,
                              important_only: bool = True) -> List[Dict]:
     """
     获取个股最新公告
+    接口：东方财富 notice API（直接 HTTP，无需 akshare）
     symbol: 6位股票代码
     important_only: 仅返回重要公告（含关键词过滤）
     """
-    ak = _lazy_akshare()
-    if not ak:
-        return []
     try:
-        df = ak.stock_notice_report(symbol=symbol)
-        if df is None or df.empty:
-            return []
-
+        url = (
+            "https://np-anotice-stock.eastmoney.com/api/security/ann"
+            f"?sr=-1&page=1&pageSize=20&ann_type=A"
+            f"&client_source=web&stock_list={symbol}"
+        )
+        resp = requests.get(url, timeout=8, headers={"Referer": "https://www.eastmoney.com/"})
+        data = resp.json()
+        items = data.get("data", {}).get("list") or []
         results = []
-        for _, row in df.iterrows():
-            title = str(row.get("公告标题", "") or "")
+        for item in items:
+            title = str(item.get("NOTICETITLE", "") or "")
             if important_only:
                 if not any(kw in title for kw in IMPORTANT_NOTICE_KEYWORDS):
                     continue
+            date_str = str(item.get("NOTICEDATE", "") or "")[:10]
+            art_code = str(item.get("ART_CODE", "") or "")
+            url_link = (
+                f"https://data.eastmoney.com/notices/detail/{symbol}/{art_code}.html"
+                if art_code else ""
+            )
             results.append({
                 "symbol": symbol,
                 "title": title,
-                "date": str(row.get("公告日期", "") or ""),
-                "url": str(row.get("公告链接", "") or ""),
+                "date": date_str,
+                "url": url_link,
             })
             if len(results) >= limit:
                 break
@@ -458,29 +354,8 @@ def get_hk_stock_quote(symbol: str) -> Optional[Dict]:
     except Exception as e:
         logger.debug(f"腾讯财经港股接口失败 {symbol}: {e}")
 
-    # ── 方案B：AKShare ──
-    ak = _lazy_akshare()
-    if not ak:
-        return None
-    try:
-        df = ak.stock_hk_spot_em()
-        row = df[df["代码"] == symbol]
-        if row.empty:
-            return None
-        r = row.iloc[0]
-        return {
-            "symbol": symbol,
-            "name": str(r.get("名称", "")),
-            "asset_type": TYPE_HK_STOCK,
-            "price": float(r.get("最新价", 0) or 0),
-            "change": float(r.get("涨跌额", 0) or 0),
-            "change_pct": float(r.get("涨跌幅", 0) or 0),
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "source": "AKShare/东方财富港股"
-        }
-    except Exception as e:
-        logger.error(f"获取港股行情失败 {symbol}: {e}")
-        return None
+    logger.warning(f"未找到港股: {symbol}")
+    return None
 
 
 # ── 加密货币 ──────────────────────────────────────────────────────────
@@ -544,33 +419,6 @@ def get_crypto_quote(symbol: str) -> Optional[Dict]:
             }
     except Exception as e:
         logger.debug(f"Binance 接口失败 {symbol}: {e}")
-
-    # ── 方案B：CoinGecko via AKShare ──
-    ak = _lazy_akshare()
-    if ak:
-        coingecko_map = {
-            "BTC": "bitcoin", "ETH": "ethereum", "BNB": "binancecoin",
-            "SOL": "solana", "XRP": "ripple", "ADA": "cardano",
-            "DOGE": "dogecoin",
-        }
-        cg_id = coingecko_map.get(s)
-        if cg_id:
-            try:
-                df = ak.crypto_hist(symbol=cg_id, period="daily", start_date="today", end_date="today")
-                if df is not None and not df.empty:
-                    r = df.iloc[-1]
-                    return {
-                        "symbol": s,
-                        "name": display_name,
-                        "asset_type": TYPE_CRYPTO,
-                        "price": float(r.get("收盘", 0) or 0),
-                        "change": 0.0,
-                        "change_pct": 0.0,
-                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "source": "CoinGecko"
-                    }
-            except Exception as e:
-                logger.debug(f"CoinGecko 接口失败 {symbol}: {e}")
 
     logger.warning(f"未找到加密货币: {symbol}")
     return None
@@ -686,36 +534,6 @@ def get_us_stock_quote(symbol: str) -> Optional[Dict]:
     except Exception as e:
         logger.debug(f"腾讯财经美股接口失败 {s}: {e}")
 
-    # ── 方案B：AKShare 美股快照 ──
-    ak = _lazy_akshare()
-    if ak:
-        try:
-            df = ak.stock_us_spot_em()
-            row = df[df["代码"].str.upper() == s]
-            if row.empty:
-                row = df[df["代码"].str.upper().str.endswith(f".{s}")]
-            if not row.empty:
-                r = row.iloc[0]
-                return {
-                    "symbol": s,
-                    "name": str(r.get("名称", s)),
-                    "asset_type": TYPE_US_STOCK,
-                    "price": float(r.get("最新价", 0) or 0),
-                    "change": float(r.get("涨跌额", 0) or 0),
-                    "change_pct": float(r.get("涨跌幅", 0) or 0),
-                    "open": float(r.get("今开", 0) or 0),
-                    "high": float(r.get("最高", 0) or 0),
-                    "low": float(r.get("最低", 0) or 0),
-                    "volume": float(r.get("成交量", 0) or 0),
-                    "turnover": float(r.get("成交额", 0) or 0),
-                    "market_cap": float(r.get("总市值", 0) or 0),
-                    "pe_ratio": float(r.get("市盈率-动态", 0) or 0),
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "source": "AKShare/东方财富美股"
-                }
-        except Exception as e:
-            logger.debug(f"AKShare 美股快照失败 {s}: {e}")
-
     logger.warning(f"未找到美股: {s}")
     return None
 
@@ -751,6 +569,16 @@ def auto_quote(symbol: str) -> Optional[Dict]:
     if s.isascii() and s.isalpha() and 1 <= len(s) <= 5:
         return get_us_stock_quote(s)
 
+    # 中文名称 → 先用 search_stock 解析成代码再查行情
+    if not symbol.isascii():
+        results = search_stock(symbol.strip())
+        if results:
+            resolved_code = results[0]["symbol"]
+            logger.debug(f"名称 '{symbol}' 解析为代码 {resolved_code}")
+            return auto_quote(resolved_code)
+        logger.warning(f"未找到股票: {symbol}")
+        return None
+
     # 默认尝试A股
     return get_stock_quote(s)
 
@@ -763,10 +591,8 @@ _A_STOCK_PREFIXES = ("60", "688", "900", "000", "001", "002", "003", "300", "301
 def search_stock(keyword: str) -> List[Dict]:
     """
     根据名称或代码关键词搜索A股
-    方案A：东方财富搜索 API（searchapi.eastmoney.com，非 push2，可访问）
-    方案B：同花顺股票搜索（AKShare）
-    方案C：pytdx 证券列表扫描（TCP，不依赖 HTTP CDN）
-    方案D：AKShare 全市场快照扫描
+    方案A：东方财富搜索 API（searchapi.eastmoney.com）
+    方案B：pytdx 证券列表扫描（TCP，不依赖 HTTP CDN）
     """
     # ── 方案A：东方财富搜索接口 ──
     _eastmoney_ok = False
@@ -802,35 +628,7 @@ def search_stock(keyword: str) -> List[Dict]:
     except Exception as e:
         logger.debug(f"东方财富搜索失败: {e}")
 
-    # ── 方案B：同花顺股票搜索（A股备用，超时5s）──
-    ak = _lazy_akshare()
-    if ak:
-        try:
-            import signal
-
-            def _timeout_handler(signum, frame):
-                raise TimeoutError("同花顺搜索超时")
-
-            signal.signal(signal.SIGALRM, _timeout_handler)
-            signal.alarm(5)
-            try:
-                df = ak.stock_search_detail_ths(symbol=keyword)
-            finally:
-                signal.alarm(0)
-
-            if df is not None and not df.empty:
-                results = []
-                for _, r in df.head(5).iterrows():
-                    code = str(r.get("代码", r.get("股票代码", "")) or "")
-                    name = str(r.get("名称", r.get("股票名称", "")) or "")
-                    if code and name:
-                        results.append({"symbol": code, "name": name})
-                if results:
-                    return results
-        except Exception as e:
-            logger.debug(f"同花顺搜索失败: {e}")
-
-    # ── 方案C：pytdx 证券列表扫描 ──
+    # ── 方案B：pytdx 证券列表扫描 ──
     api = _connect_tdx()
     if api:
         try:
@@ -863,9 +661,5 @@ def search_stock(keyword: str) -> List[Dict]:
                 api.disconnect()
             except Exception:
                 pass
-
-    # ── 方案D：AKShare 全市场快照扫描（交互式禁用，太慢）──
-    # stock_zh_a_spot_em() 下载全市场 5000+ 条数据约需 2-3 分钟，不适合实时交互
-    # 仅保留作为注释说明，如需离线批量场景可手动调用
 
     return []
