@@ -77,9 +77,10 @@ class TaskScheduler:
 
     def _schedule_startup_morning_report(self) -> None:
         """
-        工作日 08:00-12:00 内启动时，若今日早报尚未发送，30 秒后补发。
-        NTP 等待已在 entrypoint 完成，时钟此时应是准确的，但仍用
-        threading.Timer（monotonic clock）避免任何残余时钟跳变影响。
+        工作日 08:00-12:00 内启动时，若今日早报尚未发送，安排补发：
+        - 当前时间 < 09:00：等到 09:00 整点再发（NAS 提前开机的正常情况）
+        - 当前时间 09:00-12:00：30 秒后立即补发（开市后才启动，需尽快补）
+        使用 threading.Timer（monotonic clock）避免时钟跳变影响。
         """
         now = datetime.now()
         if now.weekday() >= 5:
@@ -94,8 +95,16 @@ class TaskScheduler:
         if any(job.id.startswith("user_morning_") for job in self._scheduler.get_jobs()):
             logger.info("检测到用户自定义 morning 任务，跳过全局补发")
             return
-        logger.info("今日早报未发，将在 30 秒后补发")
-        threading.Timer(30.0, self._job_index_report_all).start()
+        if t < 9 * 60:
+            # 启动时间在 09:00 之前：等到 09:00 整点
+            delay = (9 * 60 - t) * 60 - now.second
+            delay = max(delay, 1)
+            logger.info("今日早报未发，将在 %d 秒后（09:00）发送", delay)
+        else:
+            # 启动时间在 09:00-12:00 之间：30 秒后补发
+            delay = 30.0
+            logger.info("今日早报未发，将在 30 秒后补发")
+        threading.Timer(delay, self._job_index_report_all).start()
 
     def reload_user_jobs(self) -> None:
         """重新加载用户任务（新建/删除任务后调用）"""
