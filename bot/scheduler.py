@@ -354,8 +354,8 @@ class TaskScheduler:
 
     def _job_index_report_all(self) -> None:
         """全量用户指数早报（内置）；有个人专属 job 的用户跳过，避免重复推送"""
-        if db.builtin_report_sent_today("morning"):
-            logger.info("今日早报已发送，跳过重复推送")
+        if not db.try_claim_builtin_report("morning"):
+            logger.info("今日早报已有进行中/已发送记录，跳过重复推送")
             return
         users = self._get_all_users()
         for user in users:

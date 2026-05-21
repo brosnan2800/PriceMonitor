@@ -76,6 +76,9 @@ CREATE TABLE IF NOT EXISTS builtin_report_log (
     report_type  TEXT NOT NULL,            -- 'morning' | 'digest'
     sent_date    TEXT NOT NULL,            -- '2026-05-12'
     sent_at      TEXT DEFAULT (datetime('now','localtime')),
+    status       TEXT DEFAULT 'sent',      -- pending / sent
+    claimed_at   TEXT,
+    last_error   TEXT,
     UNIQUE (report_type, sent_date)        -- 每天每类只记录一次
 );
 """
@@ -106,6 +109,16 @@ def init_db():
         except sqlite3.OperationalError:
             conn.execute("ALTER TABLE alerts ADD COLUMN in_trigger INTEGER DEFAULT 0")
             logger.info("DB migration: added in_trigger column to alerts")
+        for column_sql, name in (
+            ("ALTER TABLE builtin_report_log ADD COLUMN status TEXT DEFAULT 'sent'", "status"),
+            ("ALTER TABLE builtin_report_log ADD COLUMN claimed_at TEXT", "claimed_at"),
+            ("ALTER TABLE builtin_report_log ADD COLUMN last_error TEXT", "last_error"),
+        ):
+            try:
+                conn.execute(f"SELECT {name} FROM builtin_report_log LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.execute(column_sql)
+                logger.info(f"DB migration: added {name} column to builtin_report_log")
     logger.info(f"数据库初始化完成: {DB_PATH}")
 
 
@@ -381,10 +394,56 @@ def builtin_report_sent_today(report_type: str) -> bool:
     today = _dt.now().strftime('%Y-%m-%d')
     with _conn() as conn:
         row = conn.execute(
-            "SELECT 1 FROM builtin_report_log WHERE report_type=? AND sent_date=? LIMIT 1",
+            "SELECT 1 FROM builtin_report_log WHERE report_type=? AND sent_date=? AND status='sent' LIMIT 1",
             (report_type, today)
         ).fetchone()
     return row is not None
+
+
+def try_claim_builtin_report(report_type: str, stale_after_minutes: int = 15) -> bool:
+    """原子抢占当天内置报告发送权，防止 timer 与 cron 并发重复发送。"""
+    from datetime import datetime as _dt
+    today = _dt.now().strftime('%Y-%m-%d')
+    with _conn() as conn:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO builtin_report_log
+            (report_type, sent_date, status, claimed_at)
+            VALUES (?, ?, 'pending', datetime('now','localtime'))
+            """,
+            (report_type, today)
+        )
+        if cur.rowcount == 1:
+            return True
+
+        row = conn.execute(
+            """
+            SELECT status, claimed_at
+            FROM builtin_report_log
+            WHERE report_type = ? AND sent_date = ?
+            LIMIT 1
+            """,
+            (report_type, today)
+        ).fetchone()
+        if not row or row["status"] == "sent":
+            return False
+
+        cur = conn.execute(
+            """
+            UPDATE builtin_report_log
+            SET claimed_at = datetime('now','localtime'),
+                last_error = NULL
+            WHERE report_type = ?
+              AND sent_date = ?
+              AND status = 'pending'
+              AND (
+                    claimed_at IS NULL
+                 OR claimed_at <= datetime('now', ?, 'localtime')
+              )
+            """,
+            (report_type, today, f"-{max(1, stale_after_minutes)} minutes")
+        )
+        return cur.rowcount == 1
 
 
 def mark_builtin_report_sent(report_type: str) -> None:
@@ -393,6 +452,15 @@ def mark_builtin_report_sent(report_type: str) -> None:
     today = _dt.now().strftime('%Y-%m-%d')
     with _conn() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO builtin_report_log (report_type, sent_date) VALUES (?, ?)",
+            """
+            INSERT INTO builtin_report_log
+            (report_type, sent_date, status, claimed_at, sent_at, last_error)
+            VALUES (?, ?, 'sent', datetime('now','localtime'), datetime('now','localtime'), NULL)
+            ON CONFLICT(report_type, sent_date) DO UPDATE SET
+                status = 'sent',
+                sent_at = datetime('now','localtime'),
+                claimed_at = COALESCE(builtin_report_log.claimed_at, datetime('now','localtime')),
+                last_error = NULL
+            """,
             (report_type, today)
         )

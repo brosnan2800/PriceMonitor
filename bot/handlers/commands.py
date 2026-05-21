@@ -465,10 +465,13 @@ class CommandHandler:
         if keyword not in _SKIP_SEARCH:
             results = search_stock(keyword)
             if results and len(results) == 1:
-                resolved_symbol = results[0].get("code", keyword.upper())
+                resolved_symbol = results[0].get("symbol") or results[0].get("code", keyword.upper())
                 resolved_name = results[0].get("name", keyword)
             elif results and len(results) > 1:
-                lines = "\n".join(f"  `{r['code']}`  {r['name']}" for r in results[:5])
+                lines = "\n".join(
+                    f"  `{(r.get('symbol') or r.get('code') or '').strip()}`  {r.get('name', '')}"
+                    for r in results[:5]
+                )
                 self.adapter.send_error(
                     msg.user_id,
                     f"找到多个匹配结果，请输入精确的股票代码：\n{lines}"
