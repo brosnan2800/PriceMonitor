@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS builtin_report_log (
     report_type  TEXT NOT NULL,            -- 'morning' | 'digest'
     sent_date    TEXT NOT NULL,            -- '2026-05-12'
     sent_at      TEXT DEFAULT (datetime('now','localtime')),
-    status       TEXT DEFAULT 'sent',      -- running | sent | failed
+    status       TEXT DEFAULT 'sent',      -- pending / sent
     claimed_at   TEXT,
     last_error   TEXT,
     UNIQUE (report_type, sent_date)        -- 每天每类只记录一次
@@ -100,26 +100,20 @@ def _conn():
 
 
 def init_db():
-    """初始化数据库，建表"""
+    """初始化数据库，建表（含存量 DB 字段迁移）"""
     with _conn() as conn:
         conn.executescript(SCHEMA)
-        _migrate_builtin_report_log(conn)
+        for column_sql, name in (
+            ("ALTER TABLE builtin_report_log ADD COLUMN status TEXT DEFAULT 'sent'", "status"),
+            ("ALTER TABLE builtin_report_log ADD COLUMN claimed_at TEXT", "claimed_at"),
+            ("ALTER TABLE builtin_report_log ADD COLUMN last_error TEXT", "last_error"),
+        ):
+            try:
+                conn.execute(f"SELECT {name} FROM builtin_report_log LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.execute(column_sql)
+                logger.info(f"DB migration: added {name} column to builtin_report_log")
     logger.info(f"数据库初始化完成: {DB_PATH}")
-
-
-def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
-    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    return any(r[1] == column for r in rows)
-
-
-def _migrate_builtin_report_log(conn: sqlite3.Connection) -> None:
-    """兼容历史库：为 builtin_report_log 增加运行态字段。"""
-    if not _column_exists(conn, "builtin_report_log", "status"):
-        conn.execute("ALTER TABLE builtin_report_log ADD COLUMN status TEXT DEFAULT 'sent'")
-    if not _column_exists(conn, "builtin_report_log", "claimed_at"):
-        conn.execute("ALTER TABLE builtin_report_log ADD COLUMN claimed_at TEXT")
-    if not _column_exists(conn, "builtin_report_log", "last_error"):
-        conn.execute("ALTER TABLE builtin_report_log ADD COLUMN last_error TEXT")
 
 
 # ── Users ─────────────────────────────────────────────────────────────
@@ -390,128 +384,73 @@ def builtin_report_sent_today(report_type: str) -> bool:
     today = _dt.now().strftime('%Y-%m-%d')
     with _conn() as conn:
         row = conn.execute(
-            """
-            SELECT 1 FROM builtin_report_log
-            WHERE report_type=? AND sent_date=?
-              AND (status='sent' OR (status IS NULL AND sent_at IS NOT NULL))
-            LIMIT 1
-            """,
+            "SELECT 1 FROM builtin_report_log WHERE report_type=? AND sent_date=? AND status='sent' LIMIT 1",
             (report_type, today)
         ).fetchone()
     return row is not None
 
 
-def try_claim_builtin_report(report_type: str, stale_after_minutes: int = 10) -> bool:
-    """
-    原子抢占当天内置报告发送资格。
-    返回 True 表示本次触发链路获得发送资格；False 表示已被其他链路占用/完成。
-    """
-    from datetime import datetime as _dt, timedelta as _td
-
-    now = _dt.now()
-    today = now.strftime('%Y-%m-%d')
-    now_str = now.strftime('%Y-%m-%d %H:%M:%S')
-
+def try_claim_builtin_report(report_type: str, stale_after_minutes: int = 15) -> bool:
+    """原子抢占当天内置报告发送权，防止 timer 与 cron 并发重复发送。"""
+    from datetime import datetime as _dt
+    today = _dt.now().strftime('%Y-%m-%d')
     with _conn() as conn:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO builtin_report_log
+            (report_type, sent_date, status, claimed_at)
+            VALUES (?, ?, 'pending', datetime('now','localtime'))
+            """,
+            (report_type, today)
+        )
+        if cur.rowcount == 1:
+            return True
+
         row = conn.execute(
             """
-            SELECT status, claimed_at, sent_at
+            SELECT status, claimed_at
             FROM builtin_report_log
-            WHERE report_type=? AND sent_date=?
+            WHERE report_type = ? AND sent_date = ?
             LIMIT 1
             """,
             (report_type, today)
         ).fetchone()
-
-        if row is None:
-            conn.execute(
-                """
-                INSERT INTO builtin_report_log (report_type, sent_date, status, claimed_at, sent_at)
-                VALUES (?, ?, 'running', ?, NULL)
-                """,
-                (report_type, today, now_str)
-            )
-            return True
-
-        status = row["status"]
-
-        # 兼容历史数据：没有 status 且有 sent_at 视为已发送
-        if (status is None and row["sent_at"]) or status == "sent":
+        if not row or row["status"] == "sent":
             return False
 
-        if status == "running":
-            claimed_at = row["claimed_at"]
-            stale = True
-            if claimed_at:
-                try:
-                    ts = _dt.strptime(claimed_at, '%Y-%m-%d %H:%M:%S')
-                    stale = (now - ts) >= _td(minutes=max(1, stale_after_minutes))
-                except ValueError:
-                    stale = True
-
-            if not stale:
-                return False
-
-            # CAS 更新：只有读取到的 claimed_at 仍未变化时才允许接管，避免并发双抢占。
-            if claimed_at is None:
-                cur = conn.execute(
-                    """
-                    UPDATE builtin_report_log
-                    SET status='running', claimed_at=?, last_error=NULL
-                    WHERE report_type=? AND sent_date=?
-                      AND status='running' AND claimed_at IS NULL
-                    """,
-                    (now_str, report_type, today)
-                )
-            else:
-                cur = conn.execute(
-                    """
-                    UPDATE builtin_report_log
-                    SET status='running', claimed_at=?, last_error=NULL
-                    WHERE report_type=? AND sent_date=?
-                      AND status='running' AND claimed_at=?
-                    """,
-                    (now_str, report_type, today, claimed_at)
-                )
-            return cur.rowcount > 0
-
-        # failed / 其他未知状态，允许重试抢占
         cur = conn.execute(
             """
             UPDATE builtin_report_log
-            SET status='running', claimed_at=?, last_error=NULL
-            WHERE report_type=? AND sent_date=? AND status!='sent'
+            SET claimed_at = datetime('now','localtime'),
+                last_error = NULL
+            WHERE report_type = ?
+              AND sent_date = ?
+              AND status = 'pending'
+              AND (
+                    claimed_at IS NULL
+                 OR claimed_at <= datetime('now', ?, 'localtime')
+              )
             """,
-            (now_str, report_type, today)
+            (report_type, today, f"-{max(1, stale_after_minutes)} minutes")
         )
-        return cur.rowcount > 0
-
-
-def finalize_builtin_report(report_type: str, success: bool, error: str = "") -> None:
-    """结束一次内置报告发送流程，更新最终状态。"""
-    from datetime import datetime as _dt
-    today = _dt.now().strftime('%Y-%m-%d')
-    with _conn() as conn:
-        if success:
-            conn.execute(
-                """
-                UPDATE builtin_report_log
-                SET status='sent', sent_at=datetime('now','localtime'), last_error=NULL
-                WHERE report_type=? AND sent_date=?
-                """,
-                (report_type, today)
-            )
-        else:
-            conn.execute(
-                """
-                UPDATE builtin_report_log
-                SET status='failed', last_error=?
-                WHERE report_type=? AND sent_date=?
-                """,
-                (error[:500], report_type, today)
-            )
+        return cur.rowcount == 1
 
 
 def mark_builtin_report_sent(report_type: str) -> None:
     """标记今天指定类型的内置报告已发送"""
-    finalize_builtin_report(report_type, success=True)
+    from datetime import datetime as _dt
+    today = _dt.now().strftime('%Y-%m-%d')
+    with _conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO builtin_report_log
+            (report_type, sent_date, status, claimed_at, sent_at, last_error)
+            VALUES (?, ?, 'sent', datetime('now','localtime'), datetime('now','localtime'), NULL)
+            ON CONFLICT(report_type, sent_date) DO UPDATE SET
+                status = 'sent',
+                sent_at = datetime('now','localtime'),
+                claimed_at = COALESCE(builtin_report_log.claimed_at, datetime('now','localtime')),
+                last_error = NULL
+            """,
+            (report_type, today)
+        )
