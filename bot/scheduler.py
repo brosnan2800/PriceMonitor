@@ -355,25 +355,29 @@ class TaskScheduler:
     def _job_index_report_all(self) -> None:
         """全量用户指数早报（内置）；有个人专属 job 的用户跳过，避免重复推送"""
         if not db.try_claim_builtin_report("morning"):
-            logger.info("今日早报已有进行中/已发送记录，跳过重复推送")
+            logger.info("今日早报已由其他触发链路处理，跳过重复推送")
             return
-        users = self._get_all_users()
-        for user in users:
-            uid = user["user_id"]
-            if self._scheduler.get_job(f"user_morning_{uid}"):
-                continue
-            platform = user.get("platform", "feishu")
-            adapter = self.adapters.get(platform)
-            if not adapter:
-                continue
-            try:
-                self._send_index_report(adapter, uid)
-            except CrossAppUserError as e:
-                logger.warning(f"早报跳过（跨应用账号）{uid}: {e}")
-                self._disable_cross_app_user(uid)
-            except Exception as e:
-                logger.error(f"早报推送失败 {uid}: {e}")
-        db.mark_builtin_report_sent("morning")
+        try:
+            users = self._get_all_users()
+            for user in users:
+                uid = user["user_id"]
+                if self._scheduler.get_job(f"user_morning_{uid}"):
+                    continue
+                platform = user.get("platform", "feishu")
+                adapter = self.adapters.get(platform)
+                if not adapter:
+                    continue
+                try:
+                    self._send_index_report(adapter, uid)
+                except CrossAppUserError as e:
+                    logger.warning(f"早报跳过（跨应用账号）{uid}: {e}")
+                    self._disable_cross_app_user(uid)
+                except Exception as e:
+                    logger.error(f"早报推送失败 {uid}: {e}")
+            db.finalize_builtin_report("morning", success=True)
+        except Exception as e:
+            db.finalize_builtin_report("morning", success=False, error=str(e))
+            logger.error(f"早报任务执行异常（已标记 failed）: {e}", exc_info=True)
 
     def _disable_cross_app_user(self, user_id: str) -> None:
         """将跨应用账号标记为 disabled，后续不再推送"""
@@ -455,8 +459,13 @@ class TaskScheduler:
                 return
             # 触发：推送并标记
             msg, card = self._build_alert_message(name, symbol, condition, threshold, price, change_pct, alert["id"], show_ack=True)
-            adapter.send_card(user_id, card)
-            db.set_alert_triggered(alert["id"], user_id)
+            try:
+                adapter.send_card(user_id, card)
+            except CrossAppUserError:
+                logger.warning(f"预警 #{alert['id']} 用户 {user_id} 属于其他飞书应用，禁用其全部预警")
+                db.disable_user_alerts(user_id)
+                return
+            db.set_alert_triggered(alert["id"])
         else:
             # 旧逻辑：时间冷却（每小时最多一次），不显示「知道了」按钮
             if not meets_condition:
@@ -466,7 +475,12 @@ class TaskScheduler:
                 f"{symbol}{condition}{threshold}{datetime.now().strftime('%Y%m%d%H')}".encode()
             ).hexdigest()
             if not db.already_pushed(user_id, content_hash, within_hours=2):
-                adapter.send_card(user_id, card)
+                try:
+                    adapter.send_card(user_id, card)
+                except CrossAppUserError:
+                    logger.warning(f"预警 #{alert['id']} 用户 {user_id} 属于其他飞书应用，禁用其全部预警")
+                    db.disable_user_alerts(user_id)
+                    return
                 db.log_push(user_id, alert["id"], content_hash)
 
     @staticmethod
