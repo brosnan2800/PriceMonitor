@@ -465,7 +465,7 @@ class TaskScheduler:
                 logger.warning(f"预警 #{alert['id']} 用户 {user_id} 属于其他飞书应用，禁用其全部预警")
                 db.disable_user_alerts(user_id)
                 return
-            db.set_alert_triggered(alert["id"])
+            db.set_alert_triggered(alert["id"], user_id)
         else:
             # 旧逻辑：时间冷却（每小时最多一次），不显示「知道了」按钮
             if not meets_condition:
