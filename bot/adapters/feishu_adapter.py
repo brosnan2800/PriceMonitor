@@ -109,6 +109,8 @@ class FeishuAdapter(BaseAdapter):
                     f"用户 {receive_id} 属于其他飞书应用（code={error_code}），已跳过"
                 )
             logger.error(f"飞书发送失败: {result}")
+        except CrossAppUserError:
+            raise  # 跨应用用户错误向上传播，由调用方决定如何处理
         except Exception as e:
             logger.error(f"飞书发送异常: {e}")
         return None
