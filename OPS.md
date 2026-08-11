@@ -76,8 +76,8 @@ ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose up -d"
 # 进入容器 shell
 ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose exec secretary-bot bash"
 
-# 查看数据库用户
-ssh mydocker "cd /root/Desktop/priceMonitor && docker-compose exec secretary-bot sqlite3 /app/data/secretary.db 'SELECT user_id, platform, settings FROM users'"
+# 查看数据库用户（容器内无 sqlite3，用宿主机 Python 操作 bind-mount 的 DB 文件）
+ssh mydocker "python3 -c 'import sqlite3; conn=sqlite3.connect(\"/root/Desktop/priceMonitor/data/secretary.db\"); [print(r) for r in conn.execute(\"SELECT user_id, platform FROM users\").fetchall()]'"
 ```
 
 ---
